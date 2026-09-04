@@ -1,0 +1,13 @@
+# Declares this image's default root filesystem to bootc itself, so both
+# `bootc install` and `bootc-image-builder` pick it up automatically --
+# no --rootfs flag needed anywhere downstream (workflow, Justfile, or
+# anyone else building a disk from this image).
+#
+# quay.io/fedora/fedora-bootc:44 isn't yet in bootc-image-builder's own
+# table of known distro/version -> default-filesystem mappings, so
+# without this it fails with "no default root filesystem type specified
+# in container, please use --rootfs to set manually".
+#
+# https://bootc.dev/bootc/man/bootc-install-config.5.html
+[install.filesystem.root]
+type = "btrfs"

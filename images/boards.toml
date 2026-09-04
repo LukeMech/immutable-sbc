@@ -1,0 +1,36 @@
+# Every physical, flashable board this repo builds for -- what
+# build-flash.yml matrixes over. One board doesn't need its own
+# directory (unlike a variant, its config never needs more than a few
+# fields + maybe a firmware blob's URL/checksum, all of which fit here);
+# a variant does (images/<variant>/), since it can bundle actual build
+# hook scripts and system_files/ overlays that vary in shape per variant.
+#
+# build-flash.yml's "Load board config" step reads this file directly --
+# adding a board is just adding a [boards.<name>] table here, no workflow
+# changes needed.
+#
+# Each board picks which images/<variant>/ image it flashes (`variant`)
+# and declares everything needed to turn that image into a disk for this
+# specific board: the bootc-image-builder disk config and, if the board
+# needs one, firmware that has to be embedded on the disk itself.
+
+[boards.rock-5c]
+board = "Radxa ROCK 5C (RK3588S)"
+# Which images/<variant>/ image this board flashes. Package name is
+# "immutable-sbc-<variant>" -- see images/rock5/variant.toml.
+variant = "rock5"
+disk_config = "disk_config/disk.toml"
+
+# The ROCK 5C has no onboard SPI-NOR, so UEFI firmware has to be embedded
+# on the same disk as the OS (see scripts/compose-sdcard-image.sh). The
+# edk2_* fields are optional -- only boards that need firmware embedded
+# on the disk declare them.
+#
+# Pinned to a specific release + sha256 on purpose: this blob gets dd'd
+# onto every image shipped for this board, so an unverified/floating
+# download here would be a supply-chain hole in the whole pipeline.
+# Upstream: https://github.com/edk2-porting/edk2-rk3588
+# Build used here: https://github.com/kwankiu/edk2-rk3588
+edk2_url = "https://github.com/kwankiu/edk2-rk3588/releases/download/v1.1/rock-5c_UEFI_Release_v1.1.img"
+edk2_sha256 = "30efc4cc82b0fae837a85492b720a103184cfeea8eb4a56718617e5423fb53e0"
+edk2_filename = "rock-5c_UEFI_Release_v1.1.img"

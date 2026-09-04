@@ -1,0 +1,285 @@
+name: Build flash image
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - './images/**'
+      - './disk_config/**'
+      - './scripts/**'
+      - './.github/workflows/build-flash.yml'
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
+  DEFAULT_TAG: "latest"
+  BIB_IMAGE: "quay.io/centos-bootc/bootc-image-builder:latest"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover boards
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      boards: ${{ steps.list.outputs.boards }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Every [boards.*] table in images/boards.toml IS a board -- no
+      # separate list to keep in sync. Adding a board is just adding a
+      # table there.
+      - name: List boards
+        id: list
+        run: |
+          set -euo pipefail
+          boards=$(python3 -c '
+          import json, tomllib
+          with open("images/boards.toml", "rb") as f:
+              data = tomllib.load(f)
+          print(json.dumps(sorted(data["boards"].keys())))
+          ')
+          echo "Discovered boards: ${boards}"
+          echo "boards=${boards}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build disk image (${{ matrix.board }})
+    needs: discover
+    strategy:
+      matrix:
+        board: ${{ fromJson(needs.discover.outputs.boards) }}
+      fail-fast: false
+    # aarch64-only project: always a native arm64 runner.
+    # Pinned to 24.04 (not 26.04): ubuntu-os/image-template#269 tracks the
+    # exact same "mount: ... permission denied" failure inside osbuild on
+    # ubuntu-26.04(-arm) runners; 24.04 predates whatever regressed there.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+      packages: read
+      id-token: write
+
+    steps:
+      - name: Install dependencies
+        run: |
+          set -x
+          sudo apt-get update -y
+          sudo apt-get install -y podman gdisk zstd
+
+      # fetch-depth: 0 + fetch-tags -- the changelog/release steps below
+      # need full history and every v-tag to find the previous release.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Reads this board's own [boards.<board>] table from images/boards.toml
+      # so the rest of this job never needs to hardcode this board's
+      # variant, disk config, or firmware -- add a board by adding a
+      # table there, not by editing this workflow.
+      - name: Load board config
+        id: board-config
+        run: |
+          set -euo pipefail
+          python3 - "${{ matrix.board }}" >> "$GITHUB_OUTPUT" <<'PY'
+          import sys, tomllib
+          board_name = sys.argv[1]
+          with open("images/boards.toml", "rb") as f:
+              data = tomllib.load(f)["boards"][board_name]
+          print(f"variant={data['variant']}")
+          print(f"disk_config={data['disk_config']}")
+          has_firmware = "edk2_url" in data
+          print(f"has_firmware={'true' if has_firmware else 'false'}")
+          if has_firmware:
+              print(f"firmware_url={data['edk2_url']}")
+              print(f"firmware_sha256={data['edk2_sha256']}")
+              print(f"firmware_filename={data['edk2_filename']}")
+          PY
+
+      - name: Prepare environment
+        run: |
+          USER_UID=$(id -u)
+          USER_GID=$(id -g)
+          IMAGE_NAME="immutable-sbc-${{ steps.board-config.outputs.variant }}"
+          # Lowercase the image uri
+          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
+          echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
+          echo "USER_UID=${USER_UID}" >> ${GITHUB_ENV}
+          echo "USER_GID=${USER_GID}" >> ${GITHUB_ENV}
+
+      - name: Build disk image
+        id: build
+        uses: osbuild/bootc-image-builder-action@8661cd3832544ad68c12dcde8681b13ab0f56a8d # main
+        with:
+          builder-image: ${{ env.BIB_IMAGE }}
+          config-file: ./${{ steps.board-config.outputs.disk_config }}
+          image: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
+          chown: ${{ env.USER_UID }}:${{ env.USER_GID }}
+          types: raw
+          # Root filesystem type is declared in-image, shared by every
+          # variant (system_files/usr/lib/bootc/install/00-root-filesystem.toml),
+          # not here -- no --rootfs flag needed.
+          additional-args: --use-librepo=True
+
+      # Not every board needs firmware embedded on the disk -- only ones
+      # that declare edk2_url (and friends) in their images/boards.toml table.
+      - name: Fetch board firmware
+        if: steps.board-config.outputs.has_firmware == 'true'
+        run: |
+          ./scripts/fetch-firmware.sh \
+            "${{ steps.board-config.outputs.firmware_url }}" \
+            "${{ steps.board-config.outputs.firmware_sha256 }}" \
+            "${{ steps.board-config.outputs.firmware_filename }}"
+
+      - name: Compose flashable image
+        run: |
+          set -euo pipefail
+          OUTPUT_DIR="${{ steps.build.outputs.output-directory }}"
+          OUT_NAME="immutable-sbc-${{ matrix.board }}"
+
+          # Locate the raw disk wherever bootc-image-builder actually put
+          # it, rather than assuming a fixed subpath -- its output layout
+          # has changed between versions.
+          RAW_IMAGE=$(find "${OUTPUT_DIR}" -iname '*.raw' -print -quit)
+          if [[ -z "${RAW_IMAGE}" ]]; then
+              echo "error: no .raw file found under ${OUTPUT_DIR}" >&2
+              find "${OUTPUT_DIR}"
+              exit 1
+          fi
+          echo "Found raw disk image: ${RAW_IMAGE}"
+          RAW_DIR=$(dirname "${RAW_IMAGE}")
+
+          if [[ "${{ steps.board-config.outputs.has_firmware }}" == "true" ]]; then
+            ./scripts/compose-sdcard-image.sh \
+              "${{ steps.board-config.outputs.firmware_filename }}" \
+              "${RAW_IMAGE}" \
+              "${OUT_NAME}.raw"
+            rm -f "${RAW_IMAGE}"
+          else
+            mv "${RAW_IMAGE}" "${OUT_NAME}.raw"
+          fi
+
+          zstd -T0 -12 --rm "${OUT_NAME}.raw" -o "${RAW_DIR}/${OUT_NAME}.img.zst"
+          sha256sum "${RAW_DIR}/${OUT_NAME}.img.zst" > "${RAW_DIR}/${OUT_NAME}.img.zst.sha256"
+
+      - name: Upload disk image and checksum to Job Artifacts
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: immutable-sbc-${{ matrix.board }}-raw
+          path: ${{ steps.build.outputs.output-directory }}
+          if-no-files-found: error
+          retention-days: 0
+          compression-level: 0
+          overwrite: true
+
+      # Only a real `vX.Y.Z` tag push ever creates a GitHub Release.
+      # workflow_dispatch and other non-tag runs never create one -- see
+      # "Attach disk image to latest release" below, which only ever
+      # attaches to a release that already exists.
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Finds the previous release's git tag so the changelog below can
+      # diff against the exact commit that shipped, not whatever :latest
+      # happens to point at right now.
+      - name: Determine previous release
+        id: prev-release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | grep -vx "${{ github.ref_name }}" | head -1 || true)
+          echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          PREV_TAG: ${{ steps.prev-release.outputs.prev_tag }}
+        run: |
+          set -uo pipefail
+          # Every build is also pushed under the permanent, per-commit
+          # "latest-<gitsha>" tag (see Justfile's generate-build-tags) --
+          # prefer that over the floating :latest so this diffs the exact
+          # commits each release was built from. But build.yml's runs on
+          # main share a concurrency group with cancel-in-progress: a
+          # commit's per-commit tag only exists if its run wasn't
+          # superseded by a later push before reaching the push step --
+          # fall back to :latest (what this disk was actually built from
+          # either way) whenever the exact tag isn't there.
+          PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
+          if [[ -n "${PREV_TAG}" ]]; then
+            PREV_SHA=$(git rev-parse --short "${PREV_TAG}")
+            PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${PREV_SHA}"
+          fi
+          CURRENT_SHA=$(git rev-parse --short HEAD)
+          NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CURRENT_SHA}"
+          if ! podman pull --quiet "${NEW_IMAGE_REF}" >/dev/null 2>&1; then
+            NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest"
+          fi
+
+          # A changelog is a nicety, not a reason to block the release --
+          # fall back to a placeholder rather than failing the job.
+          if ! ./scripts/generate-changelog.sh "${PREV_IMAGE_REF}" "${NEW_IMAGE_REF}" changelog.md; then
+            echo "warning: changelog generation failed, publishing release without one" >&2
+            printf '## Notes\n\nChangelog generation failed for this release -- see the commit history.\n' > changelog.md
+          fi
+
+      # NOTE: with more than one board sharing a single v-tag release,
+      # each matrix job runs this against the *same* tag_name concurrently
+      # -- softprops/action-gh-release get-or-creates the release and then
+      # uploads that job's files, which is safe for asset uploads, but the
+      # release body (this board's changelog) becomes whichever job's
+      # "Publish release" call lands last. Fine with one board; revisit
+      # (e.g. only the first/"primary" board publishes the body) once a
+      # second board actually shares a release.
+      - name: Publish release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: changelog.md
+          fail_on_unmatched_files: false
+          files: |
+            ${{ steps.build.outputs.output-directory }}/**/*.zst
+            ${{ steps.build.outputs.output-directory }}/**/*.sha256
+
+      # workflow_dispatch / other non-tag runs: attach the disk image to
+      # whatever release already exists, but never create one.
+      - name: Determine latest existing release
+        id: latest-release
+        if: github.event_name != 'pull_request' && !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LATEST_TAG=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName 2>/dev/null || true)
+          echo "tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Attach disk image to latest release
+        if: >-
+          github.event_name != 'pull_request' &&
+          !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) &&
+          steps.latest-release.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          OUTPUT_DIR="${{ steps.build.outputs.output-directory }}"
+          mapfile -t FILES < <(find "${OUTPUT_DIR}" -type f \( -name '*.zst' -o -name '*.sha256' \))
+          gh release upload "${{ steps.latest-release.outputs.tag }}" "${FILES[@]}" \
+            --repo "${{ github.repository }}" \
+            --clobber

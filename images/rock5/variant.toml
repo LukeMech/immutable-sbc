@@ -1,0 +1,20 @@
+# A "variant" is a shared OSTree/container image variant -- what build.yml
+# matrixes over. It bundles whatever software a family of boards needs on
+# top of the generic base (build_files/00-gnome-minimal.sh + the shared
+# root-fs declaration at system_files/usr/lib/bootc/install/00-root-filesystem.toml):
+#   - an optional system_files/ overlay of its own, copied onto / the
+#     same way the top-level system_files/ is -- for anything that
+#     genuinely varies per variant (nothing does yet)
+#   - any number of numbered build hooks (00-, 10-, ... naming controls
+#     execution order, same convention as build_files/), run against
+#     every board that uses this variant
+#
+# A variant is *not* tied to one physical board -- multiple entries in
+# images/boards.toml can point at the same variant if they need identical
+# OS content but have different disk layouts/firmware.
+#
+# Package name is always "immutable-sbc-<variant dir name>" -- never
+# hardcoded separately.
+
+[variant]
+description = "RK3588(S)-family boards needing the AIC8800 Wi-Fi/BT combo-chip driver"

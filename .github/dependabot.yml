@@ -1,0 +1,18 @@
+# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+#
+# github-actions: keeps every `uses:` commit-SHA pin in .github/workflows
+# up to date.
+# docker: keeps the Containerfile's `FROM ...@sha256:...` base image
+# digest up to date.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"

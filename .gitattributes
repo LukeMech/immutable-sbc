@@ -1,0 +1,12 @@
+# Force LF everywhere, regardless of platform/local git config. This repo
+# is developed on Windows but every script here runs on Linux (container
+# build, GitHub Actions runners) -- CRLF line endings in a shebang script
+# fail there with "$'\r': command not found".
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.toml text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+Justfile text eol=lf
+Containerfile text eol=lf

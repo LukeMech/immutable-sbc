@@ -1,0 +1,26 @@
+# Local `just build-*`/`just run-vm-*` output (see Justfile's `clean` recipe)
+output/
+*_build*
+previous.manifest.json
+changelog.md
+output.env
+
+# Disk/container images and firmware blobs -- these are build artifacts,
+# not source; fetched/produced by scripts/*.sh, never meant to be committed
+*.raw
+*.qcow2
+*.iso
+*.img
+*.img.zst
+*.img.xz
+*.sha256
+
+# cosign private key material -- cosign.pub is the only key file that
+# belongs in this repo. If you ever run `cosign generate-key-pair`
+# locally, make sure cosign.key never gets added.
+cosign.key
+
+# Editor/OS cruft
+.DS_Store
+Thumbs.db
+*.swp
