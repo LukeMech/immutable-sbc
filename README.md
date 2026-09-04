@@ -29,7 +29,10 @@ tooling, extended with a DKMS-built Wi-Fi/Bluetooth driver baked into the
 image at build time (the onboard AIC8800D80 combo chip needs the
 [`aic8800-usb-dkms`](https://copr.fedorainfracloud.org/coprs/ausil/aic8800-dkms/)
 COPR package -- built once, at container *build* time in a writable
-layer, not on the deployed read-only system; see
+layer, not on the deployed read-only system, then repackaged as a
+`kmod-*` rpm rather than a bare `dkms install`, so it's rpm-database
+tracked and survives the `rpm-ostree compose build-chunked-oci`
+rechunking pass in `build.yml`; see
 [`images/rock5/10-aic8800-wifi-bt.sh`](images/rock5/10-aic8800-wifi-bt.sh)).
 
 **A container image** on `ghcr.io/lukemech/immutable-sbc-rock5`, rebuilt

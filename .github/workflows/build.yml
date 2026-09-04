@@ -22,7 +22,7 @@ concurrency:
 jobs:
   discover:
     name: Discover variants
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     outputs:
       variants: ${{ steps.list.outputs.variants }}
     steps:

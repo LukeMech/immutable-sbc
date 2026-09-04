@@ -26,7 +26,7 @@ concurrency:
 jobs:
   discover:
     name: Discover boards
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     outputs:
       boards: ${{ steps.list.outputs.boards }}
     steps:
@@ -62,9 +62,7 @@ jobs:
     # ubuntu-26.04(-arm) runners; 24.04 predates whatever regressed there.
     runs-on: ubuntu-24.04-arm
     permissions:
-      contents: write
-      packages: read
-      id-token: write
+      contents: read
 
     steps:
       - name: Install dependencies
@@ -73,13 +71,8 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y podman gdisk zstd
 
-      # fetch-depth: 0 + fetch-tags -- the changelog/release steps below
-      # need full history and every v-tag to find the previous release.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-          fetch-tags: true
 
       # Reads this board's own [boards.<board>] table from images/boards.toml
       # so the rest of this job never needs to hardcode this board's
@@ -181,6 +174,45 @@ jobs:
           compression-level: 0
           overwrite: true
 
+  # Runs once, after every board in the matrix above has finished, instead
+  # of duplicating release publish/attach in each matrix job -- avoids the
+  # race that used to exist here: with more than one board sharing a
+  # single v-tag release, each matrix job ran "Publish release" against
+  # the *same* tag_name concurrently, and while softprops/action-gh-release
+  # get-or-creating the release then uploading that job's files is safe
+  # for asset uploads, the release body (whichever board's changelog) came
+  # from whichever job's call landed last.
+  release:
+    name: Publish release
+    needs: [discover, build]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04-arm
+    permissions:
+      contents: write
+      packages: read
+
+    steps:
+      # fetch-depth: 0 + fetch-tags -- the changelog/prev-release steps
+      # below need full history and every v-tag to find the previous
+      # release.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download disk images
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: immutable-sbc-*-raw
+          path: artifacts
+          merge-multiple: true
+
+      - name: Prepare environment
+        run: |
+          # Lowercase the image uri
+          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
+
       # Only a real `vX.Y.Z` tag push ever creates a GitHub Release.
       # workflow_dispatch and other non-tag runs never create one -- see
       # "Attach disk image to latest release" below, which only ever
@@ -204,47 +236,76 @@ jobs:
           PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | grep -vx "${{ github.ref_name }}" | head -1 || true)
           echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
 
+      # Every board flashes some [boards.<board>].variant, and it's the
+      # variant -- not the board -- that has its own container image on
+      # ghcr. Diff each *distinct* variant actually built this run, once,
+      # rather than once per board (redundant whenever boards share a
+      # variant, and the reason the old per-board "Publish release" step
+      # above raced in the first place).
+      - name: Determine variants
+        id: variants
+        run: |
+          set -euo pipefail
+          variants=$(python3 - "${{ needs.discover.outputs.boards }}" <<'PY'
+          import json, sys, tomllib
+          boards = json.loads(sys.argv[1])
+          with open("images/boards.toml", "rb") as f:
+              data = tomllib.load(f)["boards"]
+          print(json.dumps(sorted({data[b]["variant"] for b in boards})))
+          PY
+          )
+          echo "Built variants: ${variants}"
+          echo "variants=${variants}" >> "$GITHUB_OUTPUT"
+
       - name: Generate changelog
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           PREV_TAG: ${{ steps.prev-release.outputs.prev_tag }}
+          VARIANTS: ${{ steps.variants.outputs.variants }}
         run: |
           set -uo pipefail
-          # Every build is also pushed under the permanent, per-commit
-          # "latest-<gitsha>" tag (see Justfile's generate-build-tags) --
-          # prefer that over the floating :latest so this diffs the exact
-          # commits each release was built from. But build.yml's runs on
-          # main share a concurrency group with cancel-in-progress: a
-          # commit's per-commit tag only exists if its run wasn't
-          # superseded by a later push before reaching the push step --
-          # fall back to :latest (what this disk was actually built from
-          # either way) whenever the exact tag isn't there.
-          PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
-          if [[ -n "${PREV_TAG}" ]]; then
-            PREV_SHA=$(git rev-parse --short "${PREV_TAG}")
-            PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${PREV_SHA}"
-          fi
           CURRENT_SHA=$(git rev-parse --short HEAD)
-          NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CURRENT_SHA}"
-          if ! podman pull --quiet "${NEW_IMAGE_REF}" >/dev/null 2>&1; then
-            NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest"
-          fi
+          MULTI=$(echo "${VARIANTS}" | jq 'length > 1')
 
-          # A changelog is a nicety, not a reason to block the release --
-          # fall back to a placeholder rather than failing the job.
-          if ! ./scripts/generate-changelog.sh "${PREV_IMAGE_REF}" "${NEW_IMAGE_REF}" changelog.md; then
-            echo "warning: changelog generation failed, publishing release without one" >&2
-            printf '## Notes\n\nChangelog generation failed for this release -- see the commit history.\n' > changelog.md
-          fi
+          : > changelog.md
+          for VARIANT in $(echo "${VARIANTS}" | jq -r '.[]'); do
+            IMAGE_NAME="immutable-sbc-${VARIANT,,}"
 
-      # NOTE: with more than one board sharing a single v-tag release,
-      # each matrix job runs this against the *same* tag_name concurrently
-      # -- softprops/action-gh-release get-or-creates the release and then
-      # uploads that job's files, which is safe for asset uploads, but the
-      # release body (this board's changelog) becomes whichever job's
-      # "Publish release" call lands last. Fine with one board; revisit
-      # (e.g. only the first/"primary" board publishes the body) once a
-      # second board actually shares a release.
+            # Every build is also pushed under the permanent, per-commit
+            # "latest-<gitsha>" tag (see Justfile's generate-build-tags) --
+            # prefer that over the floating :latest so this diffs the exact
+            # commits each release was built from. But build.yml's runs on
+            # main share a concurrency group with cancel-in-progress: a
+            # commit's per-commit tag only exists if its run wasn't
+            # superseded by a later push before reaching the push step --
+            # fall back to :latest (what this disk was actually built from
+            # either way) whenever the exact tag isn't there.
+            PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
+            if [[ -n "${PREV_TAG}" ]]; then
+              PREV_SHA=$(git rev-parse --short "${PREV_TAG}")
+              PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${PREV_SHA}"
+            fi
+            NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CURRENT_SHA}"
+            if ! podman pull --quiet "${NEW_IMAGE_REF}" >/dev/null 2>&1; then
+              NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest"
+            fi
+
+            if [[ "${MULTI}" == "true" ]]; then
+              echo "# ${VARIANT}" >> changelog.md
+              echo >> changelog.md
+            fi
+
+            # A changelog is a nicety, not a reason to block the release --
+            # fall back to a placeholder rather than failing the job.
+            VARIANT_CHANGELOG=$(mktemp)
+            if ! ./scripts/generate-changelog.sh "${PREV_IMAGE_REF}" "${NEW_IMAGE_REF}" "${VARIANT_CHANGELOG}"; then
+              echo "warning: changelog generation failed for ${VARIANT}, publishing without one" >&2
+              printf '## Notes\n\nChangelog generation failed for this release -- see the commit history.\n' > "${VARIANT_CHANGELOG}"
+            fi
+            cat "${VARIANT_CHANGELOG}" >> changelog.md
+            rm -f "${VARIANT_CHANGELOG}"
+          done
+
       - name: Publish release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -254,14 +315,14 @@ jobs:
           body_path: changelog.md
           fail_on_unmatched_files: false
           files: |
-            ${{ steps.build.outputs.output-directory }}/**/*.zst
-            ${{ steps.build.outputs.output-directory }}/**/*.sha256
+            artifacts/*.zst
+            artifacts/*.sha256
 
       # workflow_dispatch / other non-tag runs: attach the disk image to
       # whatever release already exists, but never create one.
       - name: Determine latest existing release
         id: latest-release
-        if: github.event_name != 'pull_request' && !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+        if: "!(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -271,15 +332,13 @@ jobs:
 
       - name: Attach disk image to latest release
         if: >-
-          github.event_name != 'pull_request' &&
           !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) &&
           steps.latest-release.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          OUTPUT_DIR="${{ steps.build.outputs.output-directory }}"
-          mapfile -t FILES < <(find "${OUTPUT_DIR}" -type f \( -name '*.zst' -o -name '*.sha256' \))
+          mapfile -t FILES < <(find artifacts -type f \( -name '*.zst' -o -name '*.sha256' \))
           gh release upload "${{ steps.latest-release.outputs.tag }}" "${FILES[@]}" \
             --repo "${{ github.repository }}" \
             --clobber
