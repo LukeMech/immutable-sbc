@@ -1,8 +1,10 @@
 name: Build container image
 # Every successful non-PR run here (push, schedule, or workflow_dispatch)
-# automatically chains into build-flash.yml via workflow_run, which
-# builds the flash images and publishes a release -- see that file's
-# own trigger comment.
+# automatically chains into build-flash.yml via the "build-flash" job
+# below, which builds the flash images and publishes a release. Declared
+# here (this workflow calls that one as a reusable workflow), not the
+# other way around -- build-flash.yml itself never declares a trigger on
+# this file, so it never runs on its own just because this one did.
 on:
   pull_request:
     branches:
@@ -193,3 +195,21 @@ jobs:
           # https://github.com/coreos/rpm-ostree/issues/5509
           # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
           cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
+
+  # Runs once, after every variant in the matrix above has finished (not
+  # per-variant -- build-flash.yml matrixes over boards on its own and
+  # only needs to run once regardless of how many variants exist here).
+  # A real needs:-gated job in this same run's graph, not a separate
+  # triggered run elsewhere: build-flash.yml executes as part of *this*
+  # workflow run (same run page, same concurrency-visible unit), which is
+  # what jobs.<id>.uses (a reusable workflow call) gets you that firing
+  # off a separate run via the API never would. No permissions: block
+  # needed here -- build-flash.yml's own jobs already declare exactly
+  # what they need (contents: write for its release job, contents: read
+  # for its build job), and those apply as-is unless a caller explicitly
+  # narrows them.
+  build-flash:
+    name: Build flash images
+    needs: [discover, build_push]
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/build-flash.yml
