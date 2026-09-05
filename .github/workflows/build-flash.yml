@@ -1,18 +1,20 @@
 name: Build flash image
 
 on:
+  # Manual run: builds and uploads the flash images for inspection, but
+  # never tags or publishes a release (see the release job's steps below,
+  # each gated to only actually publish on the automatic workflow_run
+  # path) -- a way to test the flash-composition pipeline on demand
+  # without shipping anything.
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - './images/**'
-      - './disk_config/**'
-      - './scripts/**'
-      - './.github/workflows/build-flash.yml'
+  # The only other trigger: chains off build.yml ("Build container
+  # image") instead of a manually pushed tag -- every successful, non-PR
+  # run there flows straight into building the flash images and
+  # publishing a release, tagged automatically (see "Compute release
+  # tag" below).
+  workflow_run:
+    workflows: ["Build container image"]
+    types: [completed]
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
@@ -27,11 +29,24 @@ jobs:
   discover:
     name: Discover boards
     runs-on: ubuntu-latest
+    # workflow_run fires for *every* completion of build.yml, including
+    # its own PR runs and failures -- only a successful, non-PR run there
+    # should ever flow into a release. Gated here (the root of the
+    # dependency graph) rather than repeated on every downstream job.
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request')
     outputs:
       boards: ${{ steps.list.outputs.boards }}
     steps:
+      # Pin to the exact commit build.yml just built, not whatever main
+      # currently is -- a workflow_run event's default checkout ref is
+      # this workflow *file's* current default-branch state, which could
+      # already be ahead of it if something else landed on main in the
+      # gap. workflow_dispatch already checks out the right ref on its
+      # own, so this only takes effect for workflow_run.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # Every top-level table in images/boards.toml IS a board -- no
       # separate list to keep in sync. Adding a board is just adding a
@@ -73,6 +88,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # Reads this board's own [<board>] table from images/boards.toml so
       # the rest of this job never needs to hardcode this board's
@@ -166,7 +183,6 @@ jobs:
           sha256sum "${RAW_DIR}/${OUT_NAME}.img.zst" > "${RAW_DIR}/${OUT_NAME}.img.zst.sha256"
 
       - name: Upload disk image and checksum to Job Artifacts
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: immutable-sbc-${{ matrix.board }}-raw
@@ -187,7 +203,6 @@ jobs:
   release:
     name: Publish release
     needs: [discover, build]
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-26.04-arm
     permissions:
       contents: write
@@ -200,6 +215,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -215,10 +231,37 @@ jobs:
           # Lowercase the image uri
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
 
-      # Only a real `vX.Y.Z` tag push ever creates a GitHub Release --
-      # workflow_dispatch and other non-tag runs skip every step below.
+      # No more manually-pushed vX.Y.Z tag to read a name from -- derive
+      # one from the Fedora version this image is actually built on
+      # (Containerfile's own fedora-bootc FROM line, so it never drifts
+      # out of sync with a hardcoded number), today's date, and a 2-digit
+      # counter that starts at 01 and bumps once per existing same-day tag
+      # -- so more than one release landing on the same calendar date
+      # (e.g. build.yml's push trigger firing more than once today) gets
+      # v44.20260919-01, -02, ... instead of colliding or being skipped.
+      - name: Compute release tag
+        id: release-tag
+        run: |
+          set -euo pipefail
+          FEDORA_VER=$(awk -F'[:@]' '/^FROM quay.io\/fedora\/fedora-bootc:/ {print $2; exit}' Containerfile)
+          if [[ -z "${FEDORA_VER}" ]]; then
+            echo "error: couldn't read the Fedora version from Containerfile's fedora-bootc FROM line" >&2
+            exit 1
+          fi
+          PREFIX="v${FEDORA_VER}.$(date -u +%Y%m%d)"
+          # 10#: force base-10 so a prior "08"/"09" isn't parsed as an
+          # invalid octal literal by bash arithmetic below.
+          LAST_NUM=$(git tag -l "${PREFIX}-*" | sed -E "s/^${PREFIX}-//" | sort -n | tail -1)
+          NEXT_NUM=$(( 10#${LAST_NUM:-0} + 1 ))
+          TAG="$(printf '%s-%02d' "${PREFIX}" "${NEXT_NUM}")"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      # Publishing (tag + GitHub Release) only ever happens on the
+      # automatic path chained from build.yml -- a direct workflow_dispatch
+      # still builds and uploads the flash images above (for on-demand
+      # testing of the flash-composition pipeline) but stops here.
       - name: Login to GitHub Container Registry
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'workflow_run'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -227,13 +270,16 @@ jobs:
 
       # Finds the previous release's git tag so the changelog below can
       # diff against the exact commit that shipped, not whatever :latest
-      # happens to point at right now.
+      # happens to point at right now. No self-exclusion needed here --
+      # unlike the old manually-pushed-tag model, this run's own release
+      # tag doesn't exist yet at this point (created in "Create release
+      # tag" below), so it can't show up in this listing.
       - name: Determine previous release
         id: prev-release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'workflow_run'
         run: |
           set -euo pipefail
-          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | grep -vx "${{ github.ref_name }}" | head -1 || true)
+          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
           echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
 
       # Every board flashes some [<board>].variant, and it's the variant
@@ -268,7 +314,7 @@ jobs:
           echo "variants=${variants}" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'workflow_run'
         env:
           PREV_TAG: ${{ steps.prev-release.outputs.prev_tag }}
           VARIANTS: ${{ steps.variants.outputs.variants }}
@@ -288,12 +334,25 @@ jobs:
             # main share a concurrency group with cancel-in-progress: a
             # commit's per-commit tag only exists if its run wasn't
             # superseded by a later push before reaching the push step --
-            # fall back to :latest (what this disk was actually built from
-            # either way) whenever the exact tag isn't there.
+            # confirmed this actually happens (the commit the previous
+            # release tag points to never got its own tag pushed, even
+            # though the commit before it did). :latest is NOT a safe
+            # fallback here like it is for NEW_IMAGE_REF below: by the
+            # time this job runs, :latest already points at the *new*
+            # release's commit, so using it for "previous" would silently
+            # diff the new image against itself. Instead, walk backwards
+            # from the previous release's own commit (inclusive, never
+            # anything newer) until a commit is found whose per-commit tag
+            # actually made it to ghcr.
             PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
             if [[ -n "${PREV_TAG}" ]]; then
-              PREV_SHA=$(git rev-parse --short "${PREV_TAG}")
-              PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${PREV_SHA}"
+              while IFS= read -r CANDIDATE_SHA; do
+                CANDIDATE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CANDIDATE_SHA}"
+                if podman pull --quiet "${CANDIDATE_REF}" >/dev/null 2>&1; then
+                  PREV_IMAGE_REF="${CANDIDATE_REF}"
+                  break
+                fi
+              done < <(git log --format='%h' "${PREV_TAG}")
             fi
             NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CURRENT_SHA}"
             if ! podman pull --quiet "${NEW_IMAGE_REF}" >/dev/null 2>&1; then
@@ -316,12 +375,25 @@ jobs:
             rm -f "${VARIANT_CHANGELOG}"
           done
 
+      # Pushed only now, after the changelog above has already diffed
+      # against history that doesn't include it yet -- relies on
+      # actions/checkout's default persist-credentials plus this job's own
+      # contents: write permission (same pattern as any other push in
+      # this repo's workflows).
+      - name: Create release tag
+        if: github.event_name == 'workflow_run'
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.release-tag.outputs.tag }}"
+          git tag -a "${TAG}" -m "${TAG}"
+          git push origin "${TAG}"
+
       - name: Publish release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'workflow_run'
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: ${{ steps.release-tag.outputs.tag }}
+          name: ${{ steps.release-tag.outputs.tag }}
           body_path: changelog.md
           # bootc-image-builder-action's output-directory nests artifacts
           # by type (the raw image lands at <output-directory>/image/

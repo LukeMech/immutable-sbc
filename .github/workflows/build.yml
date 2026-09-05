@@ -1,10 +1,14 @@
 name: Build container image
+# Every successful non-PR run here (push, schedule, or workflow_dispatch)
+# automatically chains into build-flash.yml via workflow_run, which
+# builds the flash images and publishes a release -- see that file's
+# own trigger comment.
 on:
   pull_request:
     branches:
       - main
   schedule:
-    - cron: '05 10 * * *'  # 10:05am UTC everyday
+    - cron: '0 10 1,15 * *'  # ~every 2 weeks: 10:00 UTC on the 1st and 15th, as a fallback for quiet periods with no pushes
   push:
     branches:
       - main
