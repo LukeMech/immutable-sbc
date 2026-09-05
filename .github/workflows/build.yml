@@ -1,10 +1,7 @@
 name: Build container image
-# Every successful non-PR run here (push, schedule, or workflow_dispatch)
-# automatically chains into build-flash.yml via the "build-flash" job
-# below, which builds the flash images and publishes a release. Declared
-# here (this workflow calls that one as a reusable workflow), not the
-# other way around -- build-flash.yml itself never declares a trigger on
-# this file, so it never runs on its own just because this one did.
+# Every successful non-PR run here chains into release-meta (publishes
+# the release) then build-flash.yml (uses:, not a separate trigger --
+# that file never triggers on this one).
 on:
   pull_request:
     branches:
@@ -149,8 +146,8 @@ jobs:
             "${DEFAULT_TAG}" \
             "${ALIAS_TAGS}"
 
-      # These `if` statements are so that pull requests for your custom images do not make it publish any packages under your name without you knowing
-      # They also check if the runner is on the default branch so that things like the merge queue (if you enable it), are going to work
+      # Never publish from a PR; also confirms the default branch (for
+      # merge-queue compatibility).
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -196,32 +193,171 @@ jobs:
           # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
           cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
 
-  # Runs once, after every variant in the matrix above has finished (not
-  # per-variant -- build-flash.yml matrixes over boards on its own and
-  # only needs to run once regardless of how many variants exist here).
-  # A real needs:-gated job in this same run's graph, not a separate
-  # triggered run elsewhere: build-flash.yml executes as part of *this*
-  # workflow run (same run page, same concurrency-visible unit), which is
-  # what jobs.<id>.uses (a reusable workflow call) gets you that firing
-  # off a separate run via the API never would.
+  # Publishes the release (tag + changelog) as soon as the container
+  # image is live on ghcr, before build-flash.yml starts building any
+  # disk image -- the release is about the container image (what
+  # `bootc upgrade` pulls), not the much-slower flash images. Its tag
+  # output feeds the build-flash job below.
+  release-meta:
+    name: Publish release
+    needs: [discover, build_push]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04-arm
+    permissions:
+      contents: write
+      packages: read
+    outputs:
+      tag: ${{ steps.release-tag.outputs.tag }}
+
+    steps:
+      # fetch-depth: 0 + fetch-tags -- the changelog/prev-release steps
+      # below need full history and every v-tag to find the previous
+      # release.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Prepare environment
+        run: |
+          # Lowercase the image uri
+          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
+
+      # Tag = Fedora version (Containerfile's own FROM line) + today's
+      # date. First release of the day gets the bare tag; a second one
+      # the same day gets .1, then .2, and so on.
+      - name: Compute release tag
+        id: release-tag
+        run: |
+          set -euo pipefail
+          FEDORA_VER=$(awk -F'[:@]' '/^FROM quay.io\/fedora\/fedora-bootc:/ {print $2; exit}' Containerfile)
+          if [[ -z "${FEDORA_VER}" ]]; then
+            echo "error: couldn't read the Fedora version from Containerfile's fedora-bootc FROM line" >&2
+            exit 1
+          fi
+          PREFIX="v${FEDORA_VER}.$(date -u +%Y%m%d)"
+          if ! git rev-parse -q --verify "refs/tags/${PREFIX}" >/dev/null \
+              && [[ -z "$(git tag -l "${PREFIX}.*")" ]]; then
+            TAG="${PREFIX}"
+          else
+            # 10#: force base-10 so bash arithmetic below can't ever
+            # misparse a counter value as an invalid octal literal.
+            LAST_NUM=$(git tag -l "${PREFIX}.*" | sed -E "s/^${PREFIX}\.//" | sort -n | tail -1)
+            NEXT_NUM=$(( 10#${LAST_NUM:-0} + 1 ))
+            TAG="${PREFIX}.${NEXT_NUM}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Finds the previous release's tag to diff against below -- not
+      # self-referential, since this run's own tag doesn't exist yet.
+      - name: Determine previous release
+        id: prev-release
+        run: |
+          set -euo pipefail
+          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
+          echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+
+      # needs.discover.outputs.variants is already the exact list built
+      # this run -- no board->variant mapping needed, unlike when this
+      # logic lived in build-flash.yml.
+      - name: Generate changelog
+        env:
+          PREV_TAG: ${{ steps.prev-release.outputs.prev_tag }}
+          VARIANTS: ${{ needs.discover.outputs.variants }}
+        run: |
+          set -uo pipefail
+          CURRENT_SHA=$(git rev-parse --short HEAD)
+          MULTI=$(echo "${VARIANTS}" | jq 'length > 1')
+
+          : > changelog.md
+          for VARIANT in $(echo "${VARIANTS}" | jq -r '.[]'); do
+            IMAGE_NAME="immutable-sbc-${VARIANT,,}"
+
+            # Prefer the permanent per-commit "latest-<gitsha>" tag over
+            # :latest, to diff the exact commit each release was built
+            # from -- but cancel-in-progress can leave a commit's own tag
+            # never pushed (confirmed happens), and :latest isn't a safe
+            # fallback here (it already points at the *new* release by
+            # now). Walk backwards from the previous release's commit
+            # until one with a real per-commit tag is found.
+            PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
+            if [[ -n "${PREV_TAG}" ]]; then
+              while IFS= read -r CANDIDATE_SHA; do
+                CANDIDATE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CANDIDATE_SHA}"
+                if podman pull --quiet "${CANDIDATE_REF}" >/dev/null 2>&1; then
+                  PREV_IMAGE_REF="${CANDIDATE_REF}"
+                  break
+                fi
+              done < <(git log --format='%h' "${PREV_TAG}")
+            fi
+            NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CURRENT_SHA}"
+            if ! podman pull --quiet "${NEW_IMAGE_REF}" >/dev/null 2>&1; then
+              NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest"
+            fi
+
+            if [[ "${MULTI}" == "true" ]]; then
+              echo "# ${VARIANT}" >> changelog.md
+              echo >> changelog.md
+            fi
+
+            # A changelog is a nicety, not a reason to block the release --
+            # fall back to a placeholder rather than failing the job.
+            VARIANT_CHANGELOG=$(mktemp)
+            if ! ./scripts/generate-changelog.sh "${PREV_IMAGE_REF}" "${NEW_IMAGE_REF}" "${VARIANT_CHANGELOG}"; then
+              echo "warning: changelog generation failed for ${VARIANT}, publishing without one" >&2
+              printf '## Notes\n\nChangelog generation failed for this release -- see the commit history.\n' > "${VARIANT_CHANGELOG}"
+            fi
+            cat "${VARIANT_CHANGELOG}" >> changelog.md
+            rm -f "${VARIANT_CHANGELOG}"
+          done
+
+      # Pushed only now, after the changelog above has already diffed
+      # against history that doesn't include it yet.
+      - name: Create release tag
+        run: |
+          set -euo pipefail
+          # Annotated tag needs a tagger identity; a fresh checkout never
+          # configures one (confirmed: failed with "Committer identity
+          # unknown" without this).
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          TAG="${{ steps.release-tag.outputs.tag }}"
+          git tag -a "${TAG}" -m "${TAG}"
+          git push origin "${TAG}"
+
+      # No files: here on purpose -- build-flash.yml's attach-assets job
+      # uploads disk images into this same release afterward (get-or-
+      # create finds it rather than making a second one).
+      - name: Publish release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ steps.release-tag.outputs.tag }}
+          name: ${{ steps.release-tag.outputs.tag }}
+          body_path: changelog.md
+
+  # jobs.<id>.uses runs build-flash.yml as a real job in *this* run's
+  # graph (same run page), not a separate triggered run.
   #
-  # permissions: here is required, not optional -- a called workflow's
-  # nested jobs are capped by whatever the *calling* job grants (not by
-  # this repo's own per-job permissions inside build-flash.yml, contrary
-  # to what an earlier version of this comment assumed); with no
-  # permissions: here at all, GitHub fell back to this repo's default
-  # GITHUB_TOKEN permission (read), and failed outright with "The nested
-  # job 'release' is requesting 'contents: write', but is only allowed
-  # 'contents: read'." Matches the superset of what build-flash.yml's own
-  # jobs need (contents: write + packages: read for its release job;
-  # its build job only needs contents: read, already covered by this).
+  # permissions: is required here -- a called workflow's nested jobs are
+  # capped by what the *calling* job grants, not its own per-job
+  # permissions. Without this, GitHub fell back to the repo default
+  # (read) and failed: "The nested job 'release' is requesting
+  # 'contents: write', but is only allowed 'contents: read'."
   build-flash:
     name: Build flash images
-    needs: [discover, build_push]
+    needs: [discover, build_push, release-meta]
     if: github.event_name != 'pull_request'
     uses: ./.github/workflows/build-flash.yml
     with:
       publish: true
+      tag: ${{ needs.release-meta.outputs.tag }}
     permissions:
       contents: write
-      packages: read

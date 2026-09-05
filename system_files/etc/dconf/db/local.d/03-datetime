@@ -1,5 +1,7 @@
-# Automatic time zone via geoclue2's IP-based geolocation (no GPS needed
-# -- see build_files/01-gnome-minimal.sh for the actual geoclue2 package,
-# which this setting is useless without).
+# Needs geoclue2 (build_files/01-gnome-minimal.sh) and location services
+# enabled (below) -- automatic-timezone alone does nothing.
+[org/gnome/system/location]
+enabled=true
+
 [org/gnome/desktop/datetime]
 automatic-timezone=true

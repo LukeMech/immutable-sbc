@@ -1,47 +1,43 @@
 name: Build flash image
 
-# workflow_call: this file never declares a trigger on build.yml itself
-# -- build.yml has its own job with `uses: ./.github/workflows/
-# build-flash.yml`, so this runs as a real job in *that* run's own graph
-# (proper needs:-style dependency, one unified run to look at), gated on
-# needs: [discover, build_push] there rather than anything here. A human
-# can still run this file directly from the Actions UI too
-# (workflow_dispatch).
-#
-# publish (declared on both triggers, so `inputs.publish` resolves
-# consistently either way) is what actually distinguishes the two --
-# build.yml's call always sets it true; a manual UI run defaults to
-# false, building and uploading the flash images for inspection but
-# never tagging or publishing a release (see the release job's `if:`
-# below). NOT github.event_name == 'workflow_call': confirmed (a real
-# run's "Publish release" job silently skipped) that a called workflow
-# sees its *caller's* original triggering event there, same as it does
-# for github.workflow -- it's never actually 'workflow_call'.
+# Called via build.yml's `uses:` (needs: [..., release-meta] there), or
+# run directly from the Actions UI. No tag computed here -- build.yml's
+# release-meta job publishes the release first and passes its tag in.
+# publish distinguishes the two: build.yml's call always sets it true
+# (with a real tag); a manual run defaults false (build/upload for
+# inspection, attach nothing). Not github.event_name == 'workflow_call'
+# -- confirmed a called workflow sees its *caller's* original event
+# there (same quirk as github.workflow), never actually 'workflow_call'.
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish a tagged release (leave unchecked for a manual test run)"
+        description: "Attach the built disk images to an existing release (leave unchecked for a manual test run)"
         type: boolean
         default: false
+      tag:
+        description: "Existing release tag to attach disk images to (required if publish is checked)"
+        type: string
+        default: ""
   workflow_call:
     inputs:
       publish:
-        description: "Publish a tagged release"
+        description: "Attach the built disk images to an existing release"
         type: boolean
         default: false
+      tag:
+        description: "Existing release tag to attach disk images to (required if publish is true)"
+        type: string
+        default: ""
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
   DEFAULT_TAG: "latest"
 
 concurrency:
-  # Not ${{ github.workflow }} -- GitHub's own docs warn a *called*
-  # workflow sees its caller's name there, not its own ("Build container
-  # image", not "Build flash image"), which would collide with build.yml's
-  # own identical-looking concurrency group and -- combined with
-  # cancel-in-progress -- cancel the calling run out from under itself.
-  # A fixed literal string can't collide with anything.
+  # Not ${{ github.workflow }} -- a called workflow sees its *caller's*
+  # name there ("Build container image"), which would collide with
+  # build.yml's own group and (with cancel-in-progress) cancel it.
   group: build-flash-${{ github.ref || github.run_id }}
   cancel-in-progress: true
 
@@ -52,10 +48,8 @@ jobs:
     outputs:
       boards: ${{ steps.list.outputs.boards }}
     steps:
-      # No ref: override needed -- a workflow_call job's default checkout
-      # already resolves to the exact commit the calling run (build.yml)
-      # itself is running for, and a manual workflow_dispatch resolves to
-      # whatever ref it was run against, same as any other workflow.
+      # No ref: override needed -- default checkout already resolves to
+      # the calling run's exact commit (or the dispatch's own ref).
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -177,9 +171,14 @@ jobs:
               firmware.img \
               "${RAW_IMAGE}" \
               "${OUT_NAME}.raw"
-            rm -f "${RAW_IMAGE}"
+            # sudo: bootc-image-builder-action runs rootful, so this file
+            # comes out root-owned -- confirmed "Permission denied"
+            # otherwise.
+            sudo rm -f "${RAW_IMAGE}"
           else
-            mv "${RAW_IMAGE}" "${OUT_NAME}.raw"
+            # sudo mv: same root-owned-output reason as above.
+            sudo mv "${RAW_IMAGE}" "${OUT_NAME}.raw"
+            sudo chown "$(id -u):$(id -g)" "${OUT_NAME}.raw"
           fi
 
           zstd -T0 -12 --rm "${OUT_NAME}.raw" -o "${RAW_DIR}/${OUT_NAME}.img.zst"
@@ -195,39 +194,17 @@ jobs:
           compression-level: 0
           overwrite: true
 
-  # Runs once, after every board in the matrix above has finished, instead
-  # of duplicating release publish/attach in each matrix job -- avoids the
-  # race that used to exist here: with more than one board sharing a
-  # single v-tag release, each matrix job ran "Publish release" against
-  # the *same* tag_name concurrently, and while softprops/action-gh-release
-  # get-or-creating the release then uploading that job's files is safe
-  # for asset uploads, the release body (whichever board's changelog) came
-  # from whichever job's call landed last.
-  release:
-    name: Publish release
-    needs: [discover, build]
-    # Only ever runs when the caller (build.yml, or a human from the
-    # Actions UI) explicitly asked for it via the publish input -- a
-    # plain manual run defaults it to false and stops after the "build"
-    # job above (flash images built and uploaded for inspection),
-    # skipping this entire job: nothing here (changelog, tag, GitHub
-    # Release) makes sense without an actual release to attach it to.
+  # Runs once, after every board's build, attaching to the release
+  # build.yml's release-meta job already published (never waits on this).
+  attach-assets:
+    name: Attach disk images to release
+    needs: build
     if: inputs.publish == true
-    runs-on: ubuntu-26.04-arm
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: read
 
     steps:
-      # fetch-depth: 0 + fetch-tags -- the changelog/prev-release steps
-      # below need full history and every v-tag to find the previous
-      # release.
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
       - name: Download disk images
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -235,55 +212,19 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Prepare environment
-        run: |
-          # Lowercase the image uri
-          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
-
-      # No more manually-pushed vX.Y.Z tag to read a name from -- derive
-      # one from the Fedora version this image is actually built on
-      # (Containerfile's own fedora-bootc FROM line, so it never drifts
-      # out of sync with a hardcoded number) and today's date. The first
-      # release on any given date gets that bare v44.20260919, no
-      # counter at all -- only the *next* one landing on the same
-      # calendar date (e.g. build.yml's push trigger firing more than
-      # once today) gets v44.20260919.1, then .2, and so on, so the
-      # common case (one release a day) stays a plain, uncluttered tag.
-      - name: Compute release tag
-        id: release-tag
-        run: |
-          set -euo pipefail
-          FEDORA_VER=$(awk -F'[:@]' '/^FROM quay.io\/fedora\/fedora-bootc:/ {print $2; exit}' Containerfile)
-          if [[ -z "${FEDORA_VER}" ]]; then
-            echo "error: couldn't read the Fedora version from Containerfile's fedora-bootc FROM line" >&2
-            exit 1
-          fi
-          PREFIX="v${FEDORA_VER}.$(date -u +%Y%m%d)"
-          if ! git rev-parse -q --verify "refs/tags/${PREFIX}" >/dev/null \
-              && [[ -z "$(git tag -l "${PREFIX}.*")" ]]; then
-            TAG="${PREFIX}"
-          else
-            # 10#: force base-10 so bash arithmetic below can't ever
-            # misparse a counter value as an invalid octal literal.
-            LAST_NUM=$(git tag -l "${PREFIX}.*" | sed -E "s/^${PREFIX}\.//" | sort -n | tail -1)
-            NEXT_NUM=$(( 10#${LAST_NUM:-0} + 1 ))
-            TAG="${PREFIX}.${NEXT_NUM}"
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-
-      # The "build" job (matrixed per board, runs before this one) names
-      # its own artifacts before the release tag above even exists, so
-      # the version has to be spliced in here instead -- rename each
-      # .img.zst, and rewrite its .sha256 file's *contents* to match (not
-      # just its own filename): sha256sum embeds the checksummed file's
-      # name inside the file, so `sha256sum -c` would otherwise look for
-      # a file that no longer exists post-rename. Re-hashing isn't
-      # needed -- the bytes haven't changed, only the name.
+      # "build" names its artifacts before inputs.tag was known, so the
+      # version is spliced in here -- and the .sha256 file's *contents*
+      # rewritten to match (it embeds the filename, so `sha256sum -c`
+      # would look for a file that no longer exists post-rename).
       - name: Add version to release asset filenames
         env:
-          TAG: ${{ steps.release-tag.outputs.tag }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          if [[ -z "${TAG}" ]]; then
+            echo "error: publish is true but no tag was given" >&2
+            exit 1
+          fi
           find artifacts -type f -name '*.img.zst' -print0 |
             while IFS= read -r -d '' f; do
               dir=$(dirname "${f}")
@@ -299,153 +240,17 @@ jobs:
               fi
             done
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Finds the previous release's git tag so the changelog below can
-      # diff against the exact commit that shipped, not whatever :latest
-      # happens to point at right now. No self-exclusion needed here --
-      # unlike the old manually-pushed-tag model, this run's own release
-      # tag doesn't exist yet at this point (created in "Create release
-      # tag" below), so it can't show up in this listing.
-      - name: Determine previous release
-        id: prev-release
-        run: |
-          set -euo pipefail
-          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
-          echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
-
-      # Every board flashes some [<board>].variant, and it's the variant
-      # -- not the board -- that has its own container image on ghcr.
-      # Diff each *distinct* variant actually built this run, once,
-      # rather than once per board (redundant whenever boards share a
-      # variant, and the reason the old per-board "Publish release" step
-      # above raced in the first place).
-      - name: Determine variants
-        id: variants
-        env:
-          # Passed via env, not spliced onto the python3 command line --
-          # boards is a JSON array of double-quoted strings (e.g.
-          # ["rock-5c"]), and embedding that directly inside this step's
-          # own double-quoted "${{ ... }}" shell text lets bash's own
-          # quote parsing eat the JSON's inner quotes before python ever
-          # sees it (`"["rock-5c"]"` parses as quoted "[" + unquoted
-          # rock-5c + quoted "]", handing python the invalid `[rock-5c]`).
-          # env vars are set verbatim, with no such shell re-parsing.
-          BOARDS_JSON: ${{ needs.discover.outputs.boards }}
-        run: |
-          set -euo pipefail
-          variants=$(python3 - <<'PY'
-          import json, os, tomllib
-          boards = json.loads(os.environ["BOARDS_JSON"])
-          with open("images/boards.toml", "rb") as f:
-              data = tomllib.load(f)
-          print(json.dumps(sorted({data[b]["variant"] for b in boards})))
-          PY
-          )
-          echo "Built variants: ${variants}"
-          echo "variants=${variants}" >> "$GITHUB_OUTPUT"
-
-      - name: Generate changelog
-        env:
-          PREV_TAG: ${{ steps.prev-release.outputs.prev_tag }}
-          VARIANTS: ${{ steps.variants.outputs.variants }}
-        run: |
-          set -uo pipefail
-          CURRENT_SHA=$(git rev-parse --short HEAD)
-          MULTI=$(echo "${VARIANTS}" | jq 'length > 1')
-
-          : > changelog.md
-          for VARIANT in $(echo "${VARIANTS}" | jq -r '.[]'); do
-            IMAGE_NAME="immutable-sbc-${VARIANT,,}"
-
-            # Every build is also pushed under the permanent, per-commit
-            # "latest-<gitsha>" tag (see Justfile's generate-build-tags) --
-            # prefer that over the floating :latest so this diffs the exact
-            # commits each release was built from. But build.yml's runs on
-            # main share a concurrency group with cancel-in-progress: a
-            # commit's per-commit tag only exists if its run wasn't
-            # superseded by a later push before reaching the push step --
-            # confirmed this actually happens (the commit the previous
-            # release tag points to never got its own tag pushed, even
-            # though the commit before it did). :latest is NOT a safe
-            # fallback here like it is for NEW_IMAGE_REF below: by the
-            # time this job runs, :latest already points at the *new*
-            # release's commit, so using it for "previous" would silently
-            # diff the new image against itself. Instead, walk backwards
-            # from the previous release's own commit (inclusive, never
-            # anything newer) until a commit is found whose per-commit tag
-            # actually made it to ghcr.
-            PREV_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
-            if [[ -n "${PREV_TAG}" ]]; then
-              while IFS= read -r CANDIDATE_SHA; do
-                CANDIDATE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CANDIDATE_SHA}"
-                if podman pull --quiet "${CANDIDATE_REF}" >/dev/null 2>&1; then
-                  PREV_IMAGE_REF="${CANDIDATE_REF}"
-                  break
-                fi
-              done < <(git log --format='%h' "${PREV_TAG}")
-            fi
-            NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CURRENT_SHA}"
-            if ! podman pull --quiet "${NEW_IMAGE_REF}" >/dev/null 2>&1; then
-              NEW_IMAGE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest"
-            fi
-
-            if [[ "${MULTI}" == "true" ]]; then
-              echo "# ${VARIANT}" >> changelog.md
-              echo >> changelog.md
-            fi
-
-            # A changelog is a nicety, not a reason to block the release --
-            # fall back to a placeholder rather than failing the job.
-            VARIANT_CHANGELOG=$(mktemp)
-            if ! ./scripts/generate-changelog.sh "${PREV_IMAGE_REF}" "${NEW_IMAGE_REF}" "${VARIANT_CHANGELOG}"; then
-              echo "warning: changelog generation failed for ${VARIANT}, publishing without one" >&2
-              printf '## Notes\n\nChangelog generation failed for this release -- see the commit history.\n' > "${VARIANT_CHANGELOG}"
-            fi
-            cat "${VARIANT_CHANGELOG}" >> changelog.md
-            rm -f "${VARIANT_CHANGELOG}"
-          done
-
-      # Pushed only now, after the changelog above has already diffed
-      # against history that doesn't include it yet -- relies on
-      # actions/checkout's default persist-credentials plus this job's own
-      # contents: write permission (same pattern as any other push in
-      # this repo's workflows).
-      - name: Create release tag
-        run: |
-          set -euo pipefail
-          # An annotated tag needs a tagger identity, and a fresh
-          # actions/checkout never configures one (it only ever fetches/
-          # checks out, never commits) -- confirmed: "git tag -a" here
-          # failed with "Committer identity unknown" until this was added.
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          TAG="${{ steps.release-tag.outputs.tag }}"
-          git tag -a "${TAG}" -m "${TAG}"
-          git push origin "${TAG}"
-
-      - name: Publish release
+      # No tag_name/name/body -- only attaches files, doesn't touch the
+      # release's identity or changelog.
+      - name: Attach disk images to release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ steps.release-tag.outputs.tag }}
-          name: ${{ steps.release-tag.outputs.tag }}
-          body_path: changelog.md
-          # bootc-image-builder-action's output-directory nests artifacts
-          # by type (the raw image lands at <output-directory>/image/
-          # disk.raw, not the directory root), and "Upload disk image and
-          # checksum to Job Artifacts" above uploads that whole tree --
-          # so the .zst/.sha256 this step needs land at
-          # artifacts/image/... after download, not flat under artifacts/.
-          # ** globs regardless of nesting depth; fail_on_unmatched_files
-          # catches it loudly if that ever stops matching, instead of
-          # silently publishing a release with no assets (confirmed: the
-          # non-recursive artifacts/*.zst pattern this replaced did
-          # exactly that).
+          tag_name: ${{ inputs.tag }}
+          # ** because bootc-image-builder-action nests output by type
+          # (.../image/disk.raw, not the directory root); fail_on_
+          # unmatched_files catches it loudly if that glob ever stops
+          # matching, instead of silently publishing with no assets
+          # (confirmed: a non-recursive glob here did exactly that).
           fail_on_unmatched_files: true
           files: |
             artifacts/**/*.zst

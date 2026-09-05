@@ -1,6 +1,4 @@
 # Same "us" layout as /etc/vconsole.conf/xorg.conf.d -- GNOME Shell
-# tracks its own active input source here rather than reading the
-# system defaults directly. Compiled into the binary db by the same
-# `dconf update` call in build_files/01-gnome-minimal.sh as 00-power.
+# tracks its own input source separately.
 [org/gnome/desktop/input-sources]
 sources=[('xkb', 'us')]

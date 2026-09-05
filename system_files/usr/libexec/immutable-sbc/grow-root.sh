@@ -29,16 +29,27 @@ set -euo pipefail
 # ("not a block device"). Strip the bracketed subpath to get back the
 # plain device path lsblk expects.
 ROOT_SOURCE=$(findmnt -no SOURCE /var | sed -E 's/\[.*\]$//')
-ROOT_DISK="/dev/$(lsblk -no PKNAME "${ROOT_SOURCE}")"
-ROOT_PART_NUM=$(lsblk -no PARTN "${ROOT_SOURCE}")
+# -r (raw): lsblk's default column output right-pads numeric fields
+# (PARTN came back as " 4", not "4") -- that leading space made it
+# straight into growpart's argument and broke its own number check.
+ROOT_DISK="/dev/$(lsblk -rno PKNAME "${ROOT_SOURCE}")"
+ROOT_PART_NUM=$(lsblk -rno PARTN "${ROOT_SOURCE}")
 
 if [[ -z "${ROOT_DISK}" || "${ROOT_DISK}" == "/dev/" || -z "${ROOT_PART_NUM}" ]]; then
     echo "error: couldn't determine the disk/partition number backing /var (source: ${ROOT_SOURCE})" >&2
     exit 1
 fi
 
-if ! growpart "${ROOT_DISK}" "${ROOT_PART_NUM}"; then
-    echo "note: growpart made no change to ${ROOT_DISK}${ROOT_PART_NUM} -- already at max size, or nothing to grow into" >&2
-fi
+# growpart also exits nonzero for its own real errors (e.g. "FAILED:
+# partition-number must be a number", which a prior bug here triggered
+# on every boot without anyone noticing) -- only NOCHANGE is benign.
+GROWPART_OUTPUT=$(growpart "${ROOT_DISK}" "${ROOT_PART_NUM}" 2>&1) || {
+    if [[ "${GROWPART_OUTPUT}" == NOCHANGE:* ]]; then
+        echo "note: growpart made no change to ${ROOT_DISK}${ROOT_PART_NUM} -- already at max size" >&2
+    else
+        echo "${GROWPART_OUTPUT}" >&2
+        exit 1
+    fi
+}
 
 btrfs filesystem resize max /var

@@ -25,9 +25,8 @@ dnf5 install -y \
     screenfetch \
     btop
 
-# Keep btop's binary/package intact (still runnable from a terminal) but
-# drop it out of the GNOME Shell app grid -- it's a TUI tool, not
-# something meant to be launched as a windowed app.
+# Hide btop from the app grid -- it's a TUI tool, still usable from a
+# terminal, just not meant to be launched as a windowed app.
 BTOP_DESKTOP=$(find /usr/share/applications -maxdepth 1 -iname 'btop*.desktop' -print -quit)
 if [[ -z "${BTOP_DESKTOP}" ]]; then
     echo "error: btop didn't ship a .desktop file under /usr/share/applications" >&2
@@ -35,39 +34,27 @@ if [[ -z "${BTOP_DESKTOP}" ]]; then
 fi
 echo 'NoDisplay=true' >> "${BTOP_DESKTOP}"
 
-# Baked-in default account -- there's no gnome-initial-setup wizard to
-# create one on first boot. Personal SBC image, not a multi-user/shared
-# deployment -- GDM autologin (system_files/etc/gdm/custom.conf) and
-# passwordless sudo (system_files/etc/sudoers.d/lm-nopasswd) mean this
-# account never actually needs a password at all, so it's locked instead
-# of given one; nothing left that would prompt for it.
+# Baked-in default account -- no gnome-initial-setup wizard, no
+# multi-user setup. Locked instead of given a password: GDM autologin
+# (system_files/etc/gdm/custom.conf) + passwordless sudo
+# (system_files/etc/sudoers.d/lm-nopasswd) mean nothing ever needs one.
 #
-# The account itself is declared in system_files/usr/lib/sysusers.d/lm.conf
-# and its home directory in system_files/usr/lib/tmpfiles.d/lm-home.conf,
-# not `useradd` -- per bootc's own guidance
-# (https://bootc.dev/bootc/building/users-and-groups.html), systemd-sysusers
-# is what reconciles /etc/passwd on every boot instead of relying only on
-# what got baked in at build time once. Applied now so the account/home
-# dir exist immediately in this build too, not just from the first boot
-# onward. Neither sysusers nor tmpfiles set a password or populate skel,
-# so that's still done explicitly here.
+# Declared via sysusers.d/tmpfiles.d (system_files/usr/lib/...), not
+# `useradd`, per bootc's own guidance (systemd-sysusers reconciles
+# /etc/passwd every boot). Applied now too so the account/home dir exist
+# in this build already; neither sets a password or populates skel, so
+# that's still explicit here.
 systemd-sysusers /usr/lib/sysusers.d/lm.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/lm-home.conf
 cp -a /etc/skel/. /var/home/lm/
 chown -R lm:lm /var/home/lm
 passwd -l lm
 
-# sudoers.d requires exactly this permission (not group/other-writable) --
-# git only ever tracks the executable bit, not arbitrary modes, so the
-# file lands here as plain 644 after the system_files copy and has to be
-# fixed up explicitly.
+# sudoers.d requires 0440 -- git only tracks the executable bit, so it
+# lands here as plain 644 and needs fixing up.
 chmod 0440 /etc/sudoers.d/lm-nopasswd
 
-# Compile system_files/etc/dconf/db/local.d's overrides -- power
-# settings (never blank/suspend), the GNOME Shell input source (keyboard
-# layout), pinned Shell favorites, and automatic time zone -- into the
-# binary db dconf actually reads. dconf would normally recompile this
-# itself on changes to local.d, but that relies on watching the
-# directory at runtime -- this is a read-only deployed system, so it
-# has to be baked in at build time instead.
+# Compile system_files/etc/dconf/db/local.d into the binary db dconf
+# reads -- normally self-recompiling, but that relies on watching the
+# directory at runtime, which a read-only deployed system can't do.
 dconf update
