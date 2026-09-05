@@ -17,13 +17,9 @@
             ]
         },
         "containers-storage": {
-            "ghcr.io/lukemech": [
+            "": [
                 {
-                    "type": "sigstoreSigned",
-                    "keyPath": "/etc/pki/containers/lukemech-cosign.pub",
-                    "signedIdentity": {
-                        "type": "matchRepository"
-                    }
+                    "type": "insecureAcceptAnything"
                 }
             ]
         }

@@ -175,17 +175,25 @@ cosign verify --key system_files/etc/pki/containers/lukemech-cosign.pub \
 
 The deployed system enforces this itself, too, and strictly:
 `system_files/etc/containers/policy.json`'s top-level default is
-`reject`, with exactly one carve-out -- `ghcr.io/lukemech` requires a
-valid cosign signature, honored for both the `docker` transport (network
-pulls) and the `containers-storage` transport (images already resolved
-into local storage, which is what `bootc-image-builder` installs from
-when baking a fresh disk image -- without this second entry it would
-reject its own build). Nothing else is allowed at all: no other
-registry, docker or containers-storage, so a plain `podman pull` of
-anything else, including toolbox/distrobox images, is refused outright
-until explicitly added to the policy. The matching
+`reject`, with exactly one carve-out on the `docker` transport --
+`ghcr.io/lukemech` requires a valid cosign signature. That's the actual
+gate: it's checked against anything being *pulled* over the network, so
+no other registry is reachable at all (a plain `podman pull` of anything
+else, including toolbox/distrobox images, is refused outright until
+explicitly added to the policy). The matching
 `system_files/etc/containers/registries.d/lukemech.yaml` points
 podman/skopeo/bootc at cosign's signature storage.
+
+The `containers-storage` transport (images already resolved into local
+storage, rather than being pulled) is left `insecureAcceptAnything` --
+re-checking a signature there wouldn't catch anything the `docker`
+transport didn't already catch on the way in, it would only block
+legitimate local reads of an already-verified image. `bootc-image-builder`
+installs from exactly such a local reference when baking a fresh disk
+image (confirmed in CI: scoping this to `ghcr.io/lukemech` the same way
+as `docker` doesn't work -- `containers-storage` scopes require a
+`[graph-driver@graph-root]` store-specifier prefix, and osbuild's build
+root is a different, unpredictable path every run).
 `system_files/usr/lib/bootc/install/01-sigpolicy.toml` sets
 `enforce-container-sigpolicy = true`, so every install path -- fresh
 flashes via bootc-image-builder included -- records the deployment's
