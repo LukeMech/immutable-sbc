@@ -100,11 +100,12 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
-      # This is optional, this provides smaller delta updates
-      - name: Rechunk with rpm-ostree
+      # This is optional, this provides smaller delta updates.
+      # chunkah instead of `rpm-ostree compose build-chunked-oci`
+      - name: Rechunk with chunkah
         id: rechunk
         run: |
-          just ostree-rechunk \
+          just rechunk \
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 

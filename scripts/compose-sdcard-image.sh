@@ -36,7 +36,7 @@ FIRMWARE_IMG="${1:?usage: $0 <firmware.img> <bib-raw-image> <output.raw>}"
 OS_RAW_IMG="${2:?usage: $0 <firmware.img> <bib-raw-image> <output.raw>}"
 OUTPUT_IMG="${3:?usage: $0 <firmware.img> <bib-raw-image> <output.raw>}"
 
-for tool in sgdisk dd truncate sha256sum; do
+for tool in sgdisk dd truncate sha256sum od; do
     command -v "${tool}" >/dev/null || {
         echo "error: required tool '${tool}' not found" >&2
         exit 1
@@ -46,6 +46,60 @@ done
 RESERVED_MIB=16
 RESERVED_BYTES=$((RESERVED_MIB * 1024 * 1024))
 SECTOR=512
+ESP_GUID="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+
+# A "protective MBR" is the only kind this UEFI-only image should ever
+# have -- exactly one MBR partition entry (type 0xee, "EFI GPT
+# protective"), the other three all-zero. A genuine "hybrid" MBR (real,
+# non-zero entries alongside 0xee) is a legacy BIOS+GPT dual-boot trick
+# this image has no use for. sgdisk itself can't always tell the two
+# apart once it's already flagged the GPT as corrupt (it just hedges:
+# "Found protective or hybrid MBR..."), so check the actual bytes
+# instead of trusting that message either way.
+assert_protective_mbr() {
+    local img="$1"
+    local hex
+    # -v: od's default behavior collapses repeated identical lines into a
+    # single "*" marker, which would silently swallow the very all-zero
+    # bytes this check exists to inspect.
+    hex=$(od -v -An -tx1 -j 446 -N 64 "${img}" | tr -s ' \n' ' ')
+    read -ra mbr_bytes <<<"${hex}"
+    if [[ ${#mbr_bytes[@]} -ne 64 ]]; then
+        echo "error: couldn't read the 64-byte MBR partition table from ${img} (got ${#mbr_bytes[@]} bytes)" >&2
+        exit 1
+    fi
+
+    local type1="${mbr_bytes[4]}"
+    if [[ "${type1}" != "ee" ]]; then
+        echo "error: ${img}'s MBR partition 1 has type 0x${type1}, expected 0xee (protective MBR) -- not a plain GPT-protected disk" >&2
+        exit 1
+    fi
+
+    local entry byte
+    for entry in 1 2 3; do
+        for byte in $(seq 0 15); do
+            if [[ "${mbr_bytes[$((entry * 16 + byte))]}" != "00" ]]; then
+                echo "error: ${img}'s MBR partition $((entry + 1)) is non-zero -- this is a hybrid MBR, not a plain protective one" >&2
+                exit 1
+            fi
+        done
+    done
+}
+
+# Fails loudly, with a full sgdisk -p dump for diagnosis, rather than
+# silently shipping an image sgdisk itself considers questionable --
+# `sgdisk --verify`'s own exit code already does this under `set -e`,
+# but without attributing *which* step broke it or showing what's
+# actually on the disk at the point of failure.
+assert_gpt_ok() {
+    local img="$1"
+    if ! sgdisk --verify "${img}"; then
+        echo "error: sgdisk --verify failed for ${img} -- dumping partition table for diagnosis:" >&2
+        sgdisk -p "${img}" >&2 || true
+        exit 1
+    fi
+    assert_protective_mbr "${img}"
+}
 
 FW_SIZE=$(stat -c '%s' "${FIRMWARE_IMG}")
 if [[ "${FW_SIZE}" -ge "${RESERVED_BYTES}" ]]; then
@@ -105,6 +159,12 @@ dd if="${FIRMWARE_IMG}" of="${OUTPUT_IMG}" bs=1M conv=notrunc,fsync status=progr
 # ("some other tool" resized the disk underneath it.
 sgdisk -e "${OUTPUT_IMG}"
 
+# Check now, not just at the very end -- if the firmware image's own
+# GPT/MBR is actually broken (not just "resized out from under it"),
+# this is the earliest point that can be attributed to, before any OS
+# partitions are added on top of it.
+assert_gpt_ok "${OUTPUT_IMG}"
+
 fw_part_count=$(sgdisk -p "${OUTPUT_IMG}" | awk '$1 ~ /^[0-9]+$/ {c++} END{print c+0}')
 if [[ "${fw_part_count}" -lt 1 ]]; then
     echo "error: firmware image did not leave a reserved partition behind" >&2
@@ -123,6 +183,7 @@ dd if="${OS_RAW_IMG}" of="${OUTPUT_IMG}" bs=1M \
 mapfile -t part_numbers < <(sgdisk -p "${OS_RAW_IMG}" | awk '$1 ~ /^[0-9]+$/ {print $1}')
 
 new_num=$((fw_part_count + 1))
+found_esp=false
 for old_num in "${part_numbers[@]}"; do
     info=$(sgdisk -i "${old_num}" "${OS_RAW_IMG}")
 
@@ -144,10 +205,22 @@ for old_num in "${part_numbers[@]}"; do
         --partition-guid="${new_num}:${partuuid}" \
         "${OUTPUT_IMG}"
 
+    if [[ "${typecode,,}" == "${ESP_GUID}" ]]; then
+        found_esp=true
+    fi
+
     new_num=$((new_num + 1))
 done
 
-sgdisk --verify "${OUTPUT_IMG}"
+# This is a UEFI-only image (no BIOS/legacy fallback) -- confirm an EFI
+# System Partition actually made it across rather than assuming the
+# source image had one.
+if [[ "${found_esp}" != "true" ]]; then
+    echo "error: no EFI System Partition (${ESP_GUID}) found among ${OS_RAW_IMG}'s partitions -- this image would not be UEFI-bootable" >&2
+    exit 1
+fi
+
+assert_gpt_ok "${OUTPUT_IMG}"
 sgdisk -p "${OUTPUT_IMG}"
 
 echo "== Done: ${OUTPUT_IMG} =="

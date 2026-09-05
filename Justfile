@@ -131,13 +131,31 @@ build $variant="rock5" $target_image=(image_name + "-" + variant) $tag=default_t
 
     podman build "${PODMAN_BUILD_ARGS[@]}" .
 
-# Split the image for smaller updates (New)!
+# Split the image for smaller updates.
+#
+# The chunkah image is pinned by digest in Containerfile's unused
+# `chunkah-pin` stage, not hardcoded here -- that's a real (if
+# never-built) FROM line Dependabot's docker ecosystem can see and bump
+# on its own; this recipe just reads it back out, so there's exactly
+# one place to update chunkah's version.
+#
+# Used instead of `rpm-ostree compose build-chunked-oci`: the latter has
+# repeatedly dropped kernel-adjacent rpm content when re-deriving the
+# image (a custom kmod rpm, then a separate firmware-only rpm required
+# by it -- see images/rock5's aic8800 driver). chunkah has no
+# special-casing for bootable/kernel content at all; it chunks by rpm
+# ownership uniformly, so this kind of content survives it intact.
 rechunk $target_image=image_name $tag=default_tag:
     #!/usr/bin/env bash
 
     set -xeuo pipefail
 
-    # TODO: pin chunkah image to hash once mature enough
+    CHUNKAH_IMAGE=$(awk '/^FROM .*coreos\/chunkah/ {print $2; exit}' Containerfile)
+    if [[ -z "${CHUNKAH_IMAGE}" ]]; then
+        echo "error: couldn't find the chunkah-pin FROM line in Containerfile" >&2
+        exit 1
+    fi
+
     # You may run into space issues on github runners as we are making a
     # complete copy of the image, which likely has no shared layers, unless your
     # base image is also using chunkah
@@ -154,7 +172,7 @@ rechunk $target_image=image_name $tag=default_tag:
       --mount=type=image,src="${target_image}:${tag}",target=/chunkah \
       -v "${CHUNKAH_CONFIG_FILE}:/chunkah-config.json:ro,Z" \
       -v "${CHUNKAH_OUTPUT_DIR}:/run/out:Z" \
-      quay.io/coreos/chunkah:latest \
+      "${CHUNKAH_IMAGE}" \
       build \
       --verbose \
       --compressed \
@@ -166,30 +184,6 @@ rechunk $target_image=image_name $tag=default_tag:
 
     CHUNKED_IMAGE="$(podman pull "oci:${CHUNKAH_OUTPUT_DIR}/chunked")"
     podman tag "${CHUNKED_IMAGE}" "${target_image}:${tag}"
-
-# Split the image for smaller updates (Classical)!
-ostree-rechunk $target_image=image_name $tag=default_tag:
-    #!/usr/bin/env bash
-
-    set -xeuo pipefail
-
-    # Use the already-built local image to avoid pulling from a remote registry
-    RPM_OSTREE_CHUNKER_IMAGE="localhost/${target_image}:${tag}"
-
-    GRAPHROOT="$(podman info --format '{{ '{{.Store.GraphRoot}}' }}')"
-
-    podman run --rm --pull=never --privileged \
-      --mount=type=image,src="${target_image}:${tag}",target=/rpm-ostree \
-      --mount=type=bind,src=${GRAPHROOT},target=/run/host-container-storage,rw \
-      --mount=type=tmpfs,target=/run/rpm-ostree-storage \
-      --entrypoint /usr/bin/rpm-ostree \
-      "${RPM_OSTREE_CHUNKER_IMAGE}" \
-      compose build-chunked-oci \
-      --max-layers 127 \
-      --format-version=2 \
-      --bootc \
-      --rootfs /rpm-ostree \
-      --output "containers-storage:[overlay@/run/host-container-storage+/run/rpm-ostree-storage]localhost/${target_image}:${tag}"
 
 # Generate Default Tag
 [group('Utility')]

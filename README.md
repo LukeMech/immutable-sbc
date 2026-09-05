@@ -31,8 +31,8 @@ image at build time (the onboard AIC8800D80 combo chip needs the
 COPR package -- built once, at container *build* time in a writable
 layer, not on the deployed read-only system, then repackaged as a
 `kmod-*` rpm rather than a bare `dkms install`, so it's rpm-database
-tracked and survives the `rpm-ostree compose build-chunked-oci`
-rechunking pass in `build.yml`; see
+tracked and survives the [chunkah](https://github.com/coreos/chunkah)
+rechunking pass in `build.yml` (`just rechunk`, in the `Justfile`); see
 [`images/rock5/10-aic8800-wifi-bt.sh`](images/rock5/10-aic8800-wifi-bt.sh)).
 
 **A container image** on `ghcr.io/lukemech/immutable-sbc-rock5`, rebuilt

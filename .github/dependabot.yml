@@ -2,8 +2,10 @@
 #
 # github-actions: keeps every `uses:` commit-SHA pin in .github/workflows
 # up to date.
-# docker: keeps the Containerfile's `FROM ...@sha256:...` base image
-# digest up to date.
+# docker: keeps every `FROM ...@sha256:...` digest in Containerfile up
+# to date -- including its unused `chunkah-pin` stage, which exists
+# purely so this covers the chunkah image version too (the Justfile's
+# `rechunk` recipe reads that FROM line back out at runtime).
 
 version: 2
 updates:

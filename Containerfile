@@ -9,6 +9,14 @@ COPY system_files /system_files
 # config (disk configs, firmware) is only read later, by build-flash.yml.
 COPY images /images
 
+# Never built (nothing depends on it, and it sits before the real final
+# stage below so it can't accidentally become the default build target
+# either) -- exists purely so Dependabot's docker ecosystem has a real
+# `FROM ...@sha256:...` line to bump. The Justfile's `rechunk` recipe
+# reads this line back out at runtime, so this is the only place the
+# chunkah image version needs updating.
+FROM quay.io/coreos/chunkah@sha256:ff8b8b466a942ec6000445d4001fc661e2fc5a952ad9ee29b4de9ab09d1d1708 AS chunkah-pin
+
 # Base Image: Fedora bootc, aarch64.
 # The Radxa ROCK 5C (RK3588S) has no vendor kernel requirement -- the
 # rk3588s-rock-5c device tree and the RK3588 GPU/display drivers are

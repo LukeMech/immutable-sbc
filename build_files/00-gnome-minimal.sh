@@ -6,16 +6,14 @@ set -ouex pipefail
 #
 # A small, Wayland-only GNOME session: shell, settings, a file manager,
 # a terminal, a text editor and a browser. No games, no extra bundled
-# GNOME apps (Maps, Weather, Contacts, etc.) -- those are meant to come
-# from Flathub if/when the user wants them.
-#
-# gnome-initial-setup runs GDM's first-boot account creation wizard so
-# no default user/password is baked into the image.
+# GNOME apps (Maps, Weather, Contacts, etc.), no Flatpak/Flathub, no
+# gnome-initial-setup wizard -- a single baked-in account (below) logs
+# straight into GDM instead.
 
 dnf5 install -y \
+    screenfetch \
     gdm \
     gnome-shell \
-    gnome-initial-setup \
     gnome-control-center \
     gnome-console \
     gnome-text-editor \
@@ -24,7 +22,6 @@ dnf5 install -y \
     xdg-desktop-portal-gnome \
     xdg-user-dirs \
     firefox \
-    flatpak \
     NetworkManager \
     NetworkManager-wifi \
     bluez
@@ -32,3 +29,10 @@ dnf5 install -y \
 systemctl enable gdm.service
 systemctl enable NetworkManager.service
 systemctl enable bluetooth.service
+
+# Baked-in default account -- there's no gnome-initial-setup wizard to
+# create one on first boot. Known, fixed credentials by design (this is
+# a personal SBC image, not a multi-user/shared deployment); change the
+# password after first login if that assumption stops holding.
+useradd -m -G wheel lm
+echo 'lm:0000' | chpasswd
