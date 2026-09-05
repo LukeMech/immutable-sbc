@@ -234,11 +234,12 @@ jobs:
       # No more manually-pushed vX.Y.Z tag to read a name from -- derive
       # one from the Fedora version this image is actually built on
       # (Containerfile's own fedora-bootc FROM line, so it never drifts
-      # out of sync with a hardcoded number), today's date, and a 2-digit
-      # counter that starts at 01 and bumps once per existing same-day tag
+      # out of sync with a hardcoded number), today's date, and a plain
+      # counter that starts at 1 and bumps once per existing same-day tag
       # -- so more than one release landing on the same calendar date
       # (e.g. build.yml's push trigger firing more than once today) gets
-      # v44.20260919-01, -02, ... instead of colliding or being skipped.
+      # v44.20260919.1, v44.20260919.2, ... instead of colliding or being
+      # skipped.
       - name: Compute release tag
         id: release-tag
         run: |
@@ -249,11 +250,11 @@ jobs:
             exit 1
           fi
           PREFIX="v${FEDORA_VER}.$(date -u +%Y%m%d)"
-          # 10#: force base-10 so a prior "08"/"09" isn't parsed as an
-          # invalid octal literal by bash arithmetic below.
-          LAST_NUM=$(git tag -l "${PREFIX}-*" | sed -E "s/^${PREFIX}-//" | sort -n | tail -1)
+          # 10#: force base-10 so bash arithmetic below can't ever
+          # misparse a counter value as an invalid octal literal.
+          LAST_NUM=$(git tag -l "${PREFIX}.*" | sed -E "s/^${PREFIX}\.//" | sort -n | tail -1)
           NEXT_NUM=$(( 10#${LAST_NUM:-0} + 1 ))
-          TAG="$(printf '%s-%02d' "${PREFIX}" "${NEXT_NUM}")"
+          TAG="${PREFIX}.${NEXT_NUM}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       # The "build" job (matrixed per board, runs before this one) names
