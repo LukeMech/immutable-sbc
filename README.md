@@ -35,14 +35,25 @@ Flatpak/Flathub, no `gnome-initial-setup` wizard -- GDM autologins
 straight to the desktop as the baked-in `lm` account instead (fixed by
 design: this is a personal SBC image, not a multi-user/shared
 deployment). The account's password is locked, not merely blank --
-nothing ever prompts for one, since GDM autologin and passwordless sudo
-(`system_files/etc/sudoers.d/lm-nopasswd`) don't need it either. Locale
-defaults to `en_US.UTF-8` and the keyboard layout to `us`
-(`system_files/etc/locale.conf`, `vconsole.conf`,
+nothing ever prompts for one, since GDM autologin, passwordless sudo
+(`system_files/etc/sudoers.d/lm-nopasswd`) and a matching polkit rule
+(`system_files/etc/polkit-1/rules.d/90-nopasswd-lm.rules`) don't need it
+either. Screen locking is disabled outright, not just deferred
+(`system_files/etc/dconf/db/local.d/04-no-lock`) -- a locked account has
+no password that could ever authenticate a locked session back open, so
+manually locking (Super+L, the system-menu "Lock" entry) would otherwise
+strand you at an unsolvable password prompt, recoverable only by
+power-cycling the board. Locale defaults to `en_US.UTF-8` and the
+keyboard layout to `us` (`system_files/etc/locale.conf`, `vconsole.conf`,
 `X11/xorg.conf.d/00-keyboard.conf`, and GNOME's own input source via
-`dconf`). The screen never blanks and the system never suspends (also
-set via `dconf`, still changeable in Settings afterward -- see
-[`build_files/01-gnome-minimal.sh`](build_files/01-gnome-minimal.sh)).
+`dconf`; also seeded into `system_files/usr/share/factory/var/lib/
+AccountsService/users/lm`, copied into place at first boot by
+`system_files/usr/lib/tmpfiles.d/lm-accountsservice.conf` -- content
+placed directly under `system_files/var/` never reaches a real
+deployment, since bootc/ostree discards whatever's baked into `/var` in
+the container image). The screen never blanks and the system never
+suspends (also set via `dconf`, still changeable in Settings afterward --
+see [`build_files/01-gnome-minimal.sh`](build_files/01-gnome-minimal.sh)).
 
 The onboard AIC8800D80 combo chip needs the
 [`aic8800-usb-dkms`](https://copr.fedorainfracloud.org/coprs/ausil/aic8800-dkms/)
@@ -162,12 +173,21 @@ cosign verify --key system_files/etc/pki/containers/lukemech-cosign.pub \
   ghcr.io/lukemech/immutable-sbc-rock5:latest
 ```
 
-The deployed system enforces this itself, too:
-`system_files/etc/containers/policy.json` requires a valid signature for
-anything under `ghcr.io/lukemech`, and the matching
+The deployed system enforces this itself, too, and strictly:
+`system_files/etc/containers/policy.json`'s top-level default is
+`reject`, with exactly one carve-out -- `ghcr.io/lukemech` requires a
+valid cosign signature. Nothing else is allowed at all: no other
+registry, and not even local `containers-storage` (so a plain `podman
+pull` of anything else, including toolbox/distrobox images, is refused
+outright until explicitly added to the policy). The matching
 `system_files/etc/containers/registries.d/lukemech.yaml` points
-podman/skopeo/bootc at cosign's signature storage. `sudo bootc upgrade`
-refuses an image that isn't signed with this key.
+podman/skopeo/bootc at cosign's signature storage.
+`system_files/usr/lib/bootc/install/01-sigpolicy.toml` sets
+`enforce-container-sigpolicy = true`, so every install path -- fresh
+flashes via bootc-image-builder included -- records the deployment's
+origin as `ostree-image-signed` instead of `ostree-unverified-registry`.
+That's what actually makes policy.json's rule get consulted on every
+`sudo bootc upgrade`; an unsigned or wrongly-signed image is refused.
 
 ## Rebuilding it yourself
 
@@ -197,7 +217,7 @@ for the general shape of this repo -- `Containerfile` + `build_files/` +
 | [`images/variants.toml`](images/variants.toml) | Every OSTree/container image variant this repo builds -- one `[<name>]` table each: its `suffix` (-> `images/<suffix>/` and the package name) and `description` |
 | [`images/rock5/`](images/rock5/) | The `rock5` variant's own overlay, mirroring the top-level layout: `build_files/` (the aic8800 driver hook) and, if it ever needs one, a `system_files/` |
 | [`disk_config/`](disk_config/) | bootc-image-builder disk configs (deliberately small partition floors, not final sizes -- see the growroot service), referenced by path from `images/boards.toml` |
-| `Containerfile`, `build_files/`, `system_files/` | The OCI image, generic across every variant: base Fedora bootc (aarch64), minimal GNOME, the default account (`sysusers.d`/`tmpfiles.d`), never-blank/never-sleep power defaults (`dconf`), the root-growth service, and the shared root-fs declaration. Base image and chunkah (Justfile's `rechunk` recipe) are both floating tags, not digest pins -- see their own comments for why. |
+| `Containerfile`, `build_files/`, `system_files/` | The OCI image, generic across every variant: base Fedora bootc (aarch64), minimal GNOME, the default account (`sysusers.d`/`tmpfiles.d`), never-blank/never-sleep power defaults (`dconf`), the root-growth service, the shared root-fs declaration, and the enforced container signature policy (`policy.json`, `registries.d/lukemech.yaml`, `bootc/install/01-sigpolicy.toml`). Base image and chunkah (Justfile's `rechunk` recipe) are both floating tags, not digest pins -- see their own comments for why. |
 | `scripts/` | Generic, parameterized tools shared across every variant/board: firmware fetch+verify, disk composition (with GPT/MBR/ESP verification), changelog generation |
 | `.github/workflows/build.yml` | Matrixes over every variant; builds, rechunks (chunkah), signs and pushes each OCI image to GHCR (the OTA path) on every push to `main`, its own biweekly schedule, or manual dispatch -- rechunking/tagging/signing all skip on pull requests, which only need to prove the image still builds. Its own `release-meta` job then publishes a release (tagged `v<fedora-version>.<date>.<N>`, auto-incrementing per day) with a changelog, as soon as the container image itself is live on GHCR -- before build-flash.yml even starts, since the release is about the container image someone's `bootc upgrade` already pulled, not the (much slower) disk images. |
 | `.github/workflows/build-flash.yml` | Called as a reusable workflow (`uses:`, not a separate triggered run) only after build.yml's `release-meta` job has already published a release -- receives that release's tag as an input and builds each board's raw disk image, attaching it to that already-live release once ready. A direct `workflow_dispatch` builds the flash images without attaching them to anything (no tag to attach to). |

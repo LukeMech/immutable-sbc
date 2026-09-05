@@ -1,5 +1,0 @@
-# Same file gnome-control-center's Users panel writes when you pick a
-# language there -- seeding it avoids ever needing that (polkit-gated,
-# and lm has no password to authenticate it with anyway).
-[User]
-Language=en_US.UTF-8
