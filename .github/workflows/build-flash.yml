@@ -33,7 +33,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # Every [boards.*] table in images/boards.toml IS a board -- no
+      # Every top-level table in images/boards.toml IS a board -- no
       # separate list to keep in sync. Adding a board is just adding a
       # table there.
       - name: List boards
@@ -44,7 +44,7 @@ jobs:
           import json, tomllib
           with open("images/boards.toml", "rb") as f:
               data = tomllib.load(f)
-          print(json.dumps(sorted(data["boards"].keys())))
+          print(json.dumps(sorted(data.keys())))
           ')
           echo "Discovered boards: ${boards}"
           echo "boards=${boards}" >> "$GITHUB_OUTPUT"
@@ -74,8 +74,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # Reads this board's own [boards.<board>] table from images/boards.toml
-      # so the rest of this job never needs to hardcode this board's
+      # Reads this board's own [<board>] table from images/boards.toml so
+      # the rest of this job never needs to hardcode this board's
       # variant, disk config, or firmware -- add a board by adding a
       # table there, not by editing this workflow.
       - name: Load board config
@@ -86,7 +86,7 @@ jobs:
           import sys, tomllib
           board_name = sys.argv[1]
           with open("images/boards.toml", "rb") as f:
-              data = tomllib.load(f)["boards"][board_name]
+              data = tomllib.load(f)[board_name]
           print(f"variant={data['variant']}")
           print(f"disk_config={data['disk_config']}")
           has_firmware = "edk2_url" in data
@@ -236,9 +236,9 @@ jobs:
           PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | grep -vx "${{ github.ref_name }}" | head -1 || true)
           echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
 
-      # Every board flashes some [boards.<board>].variant, and it's the
-      # variant -- not the board -- that has its own container image on
-      # ghcr. Diff each *distinct* variant actually built this run, once,
+      # Every board flashes some [<board>].variant, and it's the variant
+      # -- not the board -- that has its own container image on ghcr.
+      # Diff each *distinct* variant actually built this run, once,
       # rather than once per board (redundant whenever boards share a
       # variant, and the reason the old per-board "Publish release" step
       # above raced in the first place).
@@ -250,7 +250,7 @@ jobs:
           import json, sys, tomllib
           boards = json.loads(sys.argv[1])
           with open("images/boards.toml", "rb") as f:
-              data = tomllib.load(f)["boards"]
+              data = tomllib.load(f)
           print(json.dumps(sorted({data[b]["variant"] for b in boards})))
           PY
           )

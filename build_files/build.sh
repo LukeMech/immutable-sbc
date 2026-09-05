@@ -19,14 +19,19 @@ if [[ -d "${VARIANT_DIR}/system_files" ]]; then
     cp -avf "${VARIANT_DIR}/system_files"/. /
 fi
 
-# Shared build stage, common to every variant.
-bash /ctx/00-gnome-minimal.sh
+# Shared build hooks, common to every variant, run in order.
+# Numbered-prefix naming (00-, 10-, ...) controls execution order --
+# add new hooks to build_files/ without touching this script.
+for hook in /ctx/*.sh; do
+    [[ -e "${hook}" ]] || continue
+    [[ "$(basename "${hook}")" == "build.sh" ]] && continue
+    bash "${hook}"
+done
 
-# This variant's own build hooks, run in order. Numbered-prefix naming
-# (00-, 10-, ...) controls execution order, same convention as the
-# shared stage above -- add new hooks to images/<variant>/ without
-# touching this script.
-for hook in "${VARIANT_DIR}"/*.sh; do
+# This variant's own build hooks, run in order, same convention as the
+# shared ones above -- add new hooks to images/<variant>/build_files/
+# without touching this script.
+for hook in "${VARIANT_DIR}/build_files"/*.sh; do
     [[ -e "${hook}" ]] || continue
     bash "${hook}"
 done

@@ -1,1 +1,28 @@
-# placeholder - needed for building the image
+# customizations.filesystem (the simple mountpoint/minsize block) is
+# rejected outright for the "raw" image type ("blueprint validation
+# failed for image type \"raw\": customizations.filesystem: not
+# supported"). customizations.disk.partitions is the supported way to
+# size partitions for raw -- without it, bootc-image-builder defaulted
+# the root partition to ~8.5 GiB, mostly headroom a minimal GNOME image
+# doesn't need.
+#
+# "btrfs" is a partition *type* here, not a valid fs_type value (fs_type
+# only accepts xfs/ext4/vfat/swap) -- it has to match the root filesystem
+# declared in-image, shared by every variant
+# (system_files/usr/lib/bootc/install/00-root-filesystem.toml), via a
+# subvolume instead, per https://osbuild.org/docs/user-guide/partitioning/.
+#
+# minsize is a floor, not a hard cap -- osbuild still sizes the
+# partition up to fit whatever's actually installed if that's bigger
+# than this. The raw image this produces is meant to be small and
+# flashed onto a much larger microSD/eMMC; build_files/01-growroot.sh's
+# systemd service grows this partition (and the btrfs filesystem in it)
+# to fill the rest of the physical disk on first boot -- this value is
+# not a long-term capacity limit.
+[[customizations.disk.partitions]]
+type = "btrfs"
+minsize = "1 GiB"
+
+[[customizations.disk.partitions.subvolumes]]
+name = "root"
+mountpoint = "/"

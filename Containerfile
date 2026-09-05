@@ -17,10 +17,11 @@ COPY images /images
 # chunkah image version needs updating.
 FROM quay.io/coreos/chunkah@sha256:ff8b8b466a942ec6000445d4001fc661e2fc5a952ad9ee29b4de9ab09d1d1708 AS chunkah-pin
 
-# Base Image: Fedora bootc, aarch64.
-# The Radxa ROCK 5C (RK3588S) has no vendor kernel requirement -- the
-# rk3588s-rock-5c device tree and the RK3588 GPU/display drivers are
-# upstream in mainline Linux, so the stock Fedora kernel is used as-is.
+# Base Image: Fedora bootc, aarch64. Generic across every variant --
+# any board/variant-specific kernel or driver need belongs in that
+# variant's own build hooks (images/<variant>/build_files/), not here.
+# (Today's only variant, rock5, needs none: see README.md's rock-5c
+# section for why.)
 #
 # Pinned by digest; bumped automatically by Dependabot (docker ecosystem).
 # Digest is the aarch64 child of the "44" manifest list -- podman/buildah

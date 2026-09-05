@@ -1,0 +1,8 @@
+# Never blank the screen or suspend -- this is a fixed SBC, not a
+# battery-powered laptop that benefits from either.
+[org/gnome/desktop/session]
+idle-delay=uint32 0
+
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'

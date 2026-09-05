@@ -1,12 +1,13 @@
 # Every physical, flashable board this repo builds for -- what
-# build-flash.yml matrixes over. One board doesn't need its own
-# directory (unlike a variant, its config never needs more than a few
-# fields + maybe a firmware blob's URL/checksum, all of which fit here);
-# a variant does (images/<variant>/), since it can bundle actual build
-# hook scripts and system_files/ overlays that vary in shape per variant.
+# build-flash.yml matrixes over. One board doesn't need its own entry in
+# images/variants.toml (its config never needs more than a few fields +
+# maybe a firmware blob's URL/checksum, all of which fit here); a
+# variant does have its own images/<suffix>/ directory, since it can
+# bundle actual build hook scripts and system_files/ overlays that vary
+# in shape per variant.
 #
 # build-flash.yml's "Load board config" step reads this file directly --
-# adding a board is just adding a [boards.<name>] table here, no workflow
+# adding a board is just adding a [<name>] table here, no workflow
 # changes needed.
 #
 # Each board picks which images/<variant>/ image it flashes (`variant`)
@@ -14,10 +15,11 @@
 # specific board: the bootc-image-builder disk config and, if the board
 # needs one, firmware that has to be embedded on the disk itself.
 
-[boards.rock-5c]
+[rock-5c]
 board = "Radxa ROCK 5C (RK3588S)"
-# Which images/<variant>/ image this board flashes. Package name is
-# "immutable-sbc-<variant>" -- see images/rock5/variant.toml.
+# Which variant's suffix (images/variants.toml) this board flashes --
+# selects both the images/<suffix>/ directory and the
+# "immutable-sbc-<suffix>" package name.
 variant = "rock5"
 disk_config = "disk_config/disk.toml"
 

@@ -79,7 +79,7 @@ sudoif command *args:
 #
 # Arguments:
 #   $variant - Which images/<variant>/ to build (default: "rock5"). Selects
-#             the OSTree/container image variant -- see images/*/variant.toml.
+#             the OSTree/container image variant -- see images/variants.toml.
 #             $target_image's default is always "<image_name>-<variant>",
 #             appended automatically -- never edit image-template.env's
 #             IMAGE_NAME to include a variant.

@@ -1,0 +1,10 @@
+[Unit]
+Description=Grow the root filesystem to fill the physical disk
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/immutable-sbc/grow-root.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

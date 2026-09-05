@@ -29,15 +29,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # Every directory under images/ IS a variant (images/boards.toml is
-      # a file, not a directory, so `-type d` skips it automatically) --
-      # no separate list to keep in sync. Adding a variant is just adding
-      # a directory.
+      # Every top-level table in images/variants.toml IS a variant -- no
+      # separate list to keep in sync. Adding a variant is just adding
+      # a table there (plus its images/<suffix>/ directory).
       - name: List variants
         id: list
         run: |
           set -euo pipefail
-          variants=$(find images -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | jq -R -s -c 'split("\n")[:-1]')
+          variants=$(python3 -c '
+          import json, tomllib
+          with open("images/variants.toml", "rb") as f:
+              data = tomllib.load(f)
+          print(json.dumps(sorted(v["suffix"] for v in data.values())))
+          ')
           echo "Discovered variants: ${variants}"
           echo "variants=${variants}" >> "$GITHUB_OUTPUT"
 
@@ -100,10 +104,17 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
+      # Rechunking, tag generation, and tagging only matter for an image
+      # that's actually going to be pushed -- a pull_request build never
+      # is (see the Login/Push/Sign steps below, already gated the same
+      # way), so skip all three there rather than pay for them on every
+      # PR just to throw the result away.
+      #
       # This is optional, this provides smaller delta updates.
       # chunkah instead of `rpm-ostree compose build-chunked-oci`
       - name: Rechunk with chunkah
         id: rechunk
+        if: github.event_name != 'pull_request'
         run: |
           just rechunk \
             ${IMAGE_NAME} \
@@ -111,6 +122,7 @@ jobs:
 
       - name: Generate Build Tags
         id: gen-build-tags
+        if: github.event_name != 'pull_request'
         run: |
           alias_tags="$(just generate-build-tags \
                         ${IMAGE_NAME} \
@@ -122,6 +134,7 @@ jobs:
 
       - name: Tag Image
         id: tag-images
+        if: github.event_name != 'pull_request'
         env:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
         run: |

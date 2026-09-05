@@ -179,7 +179,12 @@ dd if="${OS_RAW_IMG}" of="${OUTPUT_IMG}" bs=1M \
     conv=notrunc,fsync status=progress
 
 # 3. Re-register the OS partitions in the combined GPT, after the
-#    firmware's reserved partition(s), preserving size/type/name/PARTUUID.
+#    firmware's reserved partition(s), preserving size/type/name/PARTUUID
+#    -- and attribute bits (e.g. bit 59, GUID_FLAG_NO_AUTO/GROWFS-style
+#    flags some tooling sets on the root partition), which bootc-image-
+#    builder's own output may or may not rely on. Not dropping them
+#    costs nothing and avoids silently discarding metadata this script
+#    has no way to know isn't needed.
 mapfile -t part_numbers < <(sgdisk -p "${OS_RAW_IMG}" | awk '$1 ~ /^[0-9]+$/ {print $1}')
 
 new_num=$((fw_part_count + 1))
@@ -192,6 +197,7 @@ for old_num in "${part_numbers[@]}"; do
     typecode=$(awk -F': ' '/^Partition GUID code/ {print $2}' <<<"${info}" | awk '{print $1}')
     partuuid=$(awk -F': ' '/^Partition unique GUID/ {print $2}' <<<"${info}" | awk '{print $1}')
     name=$(awk -F"'" '/^Partition name/ {print $2}' <<<"${info}")
+    attributes=$(awk -F': ' '/^Attribute flags/ {print $2}' <<<"${info}")
 
     new_start=$((old_start + DELTA_SECTORS))
     new_end=$((old_end + DELTA_SECTORS))
@@ -204,6 +210,10 @@ for old_num in "${part_numbers[@]}"; do
         --change-name="${new_num}:${name}" \
         --partition-guid="${new_num}:${partuuid}" \
         "${OUTPUT_IMG}"
+
+    if [[ -n "${attributes}" ]]; then
+        sgdisk --attributes="${new_num}:=:${attributes}" "${OUTPUT_IMG}"
+    fi
 
     if [[ "${typecode,,}" == "${ESP_GUID}" ]]; then
         found_esp=true

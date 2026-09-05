@@ -1,0 +1,27 @@
+# Every shared OSTree/container image variant this repo builds -- what
+# build.yml matrixes over. A variant bundles whatever software a family
+# of boards needs on top of the generic base
+# (build_files/00-gnome-minimal.sh + the shared root-fs declaration at
+# system_files/usr/lib/bootc/install/00-root-filesystem.toml):
+#   - images/<suffix>/build_files/ -- numbered build hooks (00-, 10-,
+#     ... naming controls execution order, same convention as the
+#     top-level build_files/), run against every board that uses this
+#     variant
+#   - images/<suffix>/system_files/ -- an optional overlay of its own,
+#     copied onto / the same way the top-level system_files/ is, for
+#     anything that genuinely varies per variant (nothing does yet)
+#
+# A variant is *not* tied to one physical board -- multiple entries in
+# images/boards.toml can point at the same variant (by suffix) if they
+# need identical OS content but have different disk layouts/firmware.
+#
+# Package name is always "immutable-sbc-<suffix>" -- never hardcoded
+# separately. build.yml's "List variants" step reads this file
+# directly -- adding a variant is just adding a [<name>] table here
+# plus its images/<suffix>/ directory, no workflow changes needed.
+
+[rock5]
+# images/rock5/ is this variant's directory; "immutable-sbc-rock5" is
+# its package name.
+suffix = "rock5"
+description = "RK3588(S)-family boards needing the AIC8800 Wi-Fi/BT combo-chip driver"

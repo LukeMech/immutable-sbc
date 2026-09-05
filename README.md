@@ -4,12 +4,15 @@ A [Universal Blue](https://universal-blue.org/)-style, OTA-updatable,
 minimal GNOME [bootc](https://containers.github.io/bootc/) image builder
 for single-board computers. Everything lives under [`images/`](images/):
 
-- **A variant** (`images/<variant>/`, e.g. [`images/rock5/`](images/rock5/))
-  is a shared OSTree/container image variant -- what
-  [`build.yml`](.github/workflows/build.yml) matrixes over. It's a real
-  directory, since it can bundle actual build hook scripts and
-  `system_files/` overlays. Package name is always `immutable-sbc-<variant>`.
-- **A board** (a `[boards.<board>]` table in [`images/boards.toml`](images/boards.toml))
+- **A variant** (a `[<name>]` table in [`images/variants.toml`](images/variants.toml),
+  e.g. `[rock5]`) is a shared OSTree/container image variant -- what
+  [`build.yml`](.github/workflows/build.yml) matrixes over. Each
+  one also has a real directory (`images/<suffix>/`, e.g.
+  [`images/rock5/`](images/rock5/)) mirroring the top-level repo layout
+  -- `build_files/` for its own numbered build hooks, an optional
+  `system_files/` overlay -- since a variant can bundle both. Package
+  name is always `immutable-sbc-<suffix>`.
+- **A board** (a `[<board>]` table in [`images/boards.toml`](images/boards.toml))
   is one physical, flashable board -- what
   [`build-flash.yml`](.github/workflows/build-flash.yml) matrixes over.
   Its config never needs more than a few fields plus maybe a firmware
@@ -23,37 +26,59 @@ one of each:
 
 ## rock5: RK3588(S) boards needing the AIC8800 Wi-Fi/BT driver
 
-See [`images/rock5/variant.toml`](images/rock5/variant.toml). Built from
+See the `[rock5]` table in [`images/variants.toml`](images/variants.toml).
+Built from
 [`ublue-os/image-template`](https://github.com/ublue-os/image-template)'s
-tooling, extended with a DKMS-built Wi-Fi/Bluetooth driver baked into the
-image at build time (the onboard AIC8800D80 combo chip needs the
+tooling, on top of a minimal, Wayland-only GNOME session: shell, settings,
+a file manager, a terminal, a text editor and a browser. No games, no
+extra bundled GNOME apps, no Flatpak/Flathub, no `gnome-initial-setup`
+wizard -- log straight into GDM as the baked-in `lm` / `0000` account
+instead (fixed credentials by design: this is a personal SBC image, not a
+multi-user/shared deployment). The screen never blanks and the system
+never suspends (set via `dconf`, still changeable in Settings afterward --
+see [`build_files/00-gnome-minimal.sh`](build_files/00-gnome-minimal.sh)).
+
+The onboard AIC8800D80 combo chip needs the
 [`aic8800-usb-dkms`](https://copr.fedorainfracloud.org/coprs/ausil/aic8800-dkms/)
-COPR package -- built once, at container *build* time in a writable
-layer, not on the deployed read-only system, then repackaged as a
-`kmod-*` rpm rather than a bare `dkms install`, so it's rpm-database
-tracked and survives the [chunkah](https://github.com/coreos/chunkah)
-rechunking pass in `build.yml` (`just rechunk`, in the `Justfile`); see
-[`images/rock5/10-aic8800-wifi-bt.sh`](images/rock5/10-aic8800-wifi-bt.sh)).
+COPR package for Wi-Fi/BT, built once at container *build* time in a
+writable layer, not on the deployed read-only system. Neither the built
+kernel module nor the firmware it loads at runtime ship as bare files or
+depend on the upstream `aic8800-usb-dkms`/`aic8800-firmware` packages
+surviving into the final image -- both get pulled into one
+self-contained `kmod-aic8800-usb` rpm instead, so they're rpm-database
+tracked and don't depend on how any later step in the pipeline
+re-derives the image. See
+[`images/rock5/build_files/10-aic8800-wifi-bt.sh`](images/rock5/build_files/10-aic8800-wifi-bt.sh)
+for the full story (this was tightened twice after real-hardware testing
+turned up two separate ways bare/upstream-owned files were getting
+dropped before ever reaching a deployed board).
 
 **A container image** on `ghcr.io/lukemech/immutable-sbc-rock5`, rebuilt
 nightly and on every push to `main`. Once installed, `bootc upgrade` pulls
 updates the same way any bootc/ostree system does -- no reflashing
-required.
+required. Images are rechunked with [chunkah](https://github.com/coreos/chunkah)
+(`just rechunk`, in the `Justfile`) rather than `rpm-ostree compose
+build-chunked-oci` -- chunkah has no special-casing for bootable/kernel
+content, which the classic rechunker does and which was implicated in one
+of the two dropped-file bugs above.
 
 ## rock-5c: Radxa ROCK 5C (RK3588S)
 
-See the `[boards.rock-5c]` table in [`images/boards.toml`](images/boards.toml).
+See the `[rock-5c]` table in [`images/boards.toml`](images/boards.toml).
 Flashes the `rock5` variant above.
 
 ### What you get
 
-- **A microSD/eMMC image** (`.raw`, zstd-compressed) -- the primary way to
-  get this onto a bare board. Built on demand via the *Build flash image*
-  workflow, or attached to a [Release](../../releases) when a `vX.Y.Z` tag
-  is pushed.
-- **A qcow2 image**, for testing in a VM before touching real hardware.
-- **An ISO**, for local (re)installs -- see the caveat below before you
-  reach for it.
+- **A microSD/eMMC image** (`.raw`, zstd-compressed) -- the only thing
+  the *Build flash image* workflow and [Release](../../releases) assets
+  actually produce. Built on demand, or attached to a [Release](../../releases)
+  when a `vX.Y.Z` tag is pushed.
+
+`just build-qcow2`/`just build-iso` also exist in the Justfile (see
+"Rebuilding it yourself" below), but neither is part of this pipeline or
+currently verified -- `build-iso` specifically is broken as of this
+writing, since it references `disk_config/iso.toml`, which doesn't
+exist.
 
 ### Why this needed more than the stock template
 
@@ -71,10 +96,13 @@ to deal with:
    [`scripts/fetch-firmware.sh`](scripts/fetch-firmware.sh), pinned +
    sha256-verified, URL/checksum declared in this board's own
    `edk2_url`/`edk2_sha256` fields in `images/boards.toml`) to the front
-   of the disk, then
-   relocates the normal bootc-image-builder GPT (ESP + boot + root) to
-   start right after it, preserving every filesystem UUID and partition
-   UUID along the way.
+   of the disk, then relocates the normal bootc-image-builder GPT
+   (ESP + boot + root) to start right after it, preserving every
+   filesystem UUID, partition UUID and GPT attribute bit along the way.
+   The result is checked, not assumed: the composed disk is confirmed to
+   have a genuine protective (not corrupt/hybrid) MBR, a consistent GPT,
+   and a real EFI System Partition before the build is allowed to
+   succeed.
 2. **Wi-Fi/BT.** Handled by the `rock5` variant above, not by this board
    -- it's a property of the OS image, not the disk.
 
@@ -96,26 +124,15 @@ mainline Linux, so no vendor kernel is used.
 
    (Balena Etcher and Raspberry Pi Imager can also write a `.zst`-
    compressed raw image directly, if you prefer a GUI.)
-3. Boot the ROCK 5C from that card. First boot runs GNOME's account
-   setup wizard -- no default username/password is baked into the image.
+3. Boot the ROCK 5C from that card and log into GDM as `lm` / `0000` --
+   there's no first-boot setup wizard to create an account.
 4. The root filesystem grows to fill the rest of the card/eMMC
-   automatically on first boot.
-
-### ISO caveat
-
-The ISO is a normal Anaconda installer image, but the ROCK 5C has no ROM
-UEFI to boot it with in the first place -- unlike a PC, this board can
-only reach a UEFI shell if the EDK2 firmware is *already resident* on
-whatever medium it's booting from. In practice that means the ISO is only
-useful for:
-
-- reinstalling/resetting the OS on a board that's already running a
-  `.raw`-flashed card (the firmware region is untouched by a fresh
-  install to a different partition/disk), or
-- testing in a UEFI-capable VM.
-
-It is **not** a bare-metal-from-nothing installer the way a PC ISO is. Use
-the `.raw` image for first-time bring-up.
+   automatically on first boot
+   (`immutable-sbc-growroot.service`, see
+   [`build_files/01-growroot.sh`](build_files/01-growroot.sh)) -- the raw
+   image itself is deliberately built small
+   ([`disk_config/disk.toml`](disk_config/disk.toml)), it isn't meant to
+   reflect the actual capacity of the card you're flashing onto.
 
 ## OTA updates
 
@@ -133,8 +150,12 @@ public key is at [`cosign.pub`](cosign.pub).
 
 ```bash
 just build              # container image, variant defaults to "rock5"
-just build-raw          # or build-qcow2 / build-iso -- disk image for the rock-5c board
+just build-raw          # disk image for the rock-5c board -- what CI actually ships
 ```
+
+`build-qcow2` also exists for local VM testing, but isn't part of this
+project's CI and isn't currently verified. `build-iso` is broken as of
+this writing (references the now-removed `disk_config/iso.toml`).
 
 Every recipe takes an optional `variant` argument (defaults to `rock5`,
 this repo's only variant today) -- e.g. `just build rock5`. Package name is
@@ -149,30 +170,39 @@ for the general shape of this repo -- `Containerfile` + `build_files/` +
 
 | Path | Purpose |
 |---|---|
-| [`images/boards.toml`](images/boards.toml) | Every physical board this repo flashes for -- one `[boards.<board>]` table each: which variant it flashes, where its disk config lives, EDK2 firmware URL/sha256 |
-| [`images/rock5/`](images/rock5/) | The `rock5` OSTree image variant: `variant.toml` and the aic8800 driver script |
-| [`disk_config/`](disk_config/) | bootc-image-builder disk configs, referenced by path from `images/boards.toml` |
-| `Containerfile`, `build_files/`, `system_files/` | The OCI image: base Fedora bootc (aarch64) + minimal GNOME + the shared root-fs declaration, generic across every variant |
-| `scripts/` | Generic, parameterized tools shared across every variant/board: firmware fetch+verify, disk composition, changelog generation |
-| `.github/workflows/build.yml` | Matrixes over every variant; builds + signs + pushes each OCI image to GHCR (the OTA path) |
-| `.github/workflows/build-flash.yml` | Matrixes over every board; builds the raw/qcow2/iso artifacts on demand and on release tags; publishes the release for `vX.Y.Z` tags |
-| `.github/dependabot.yml` | Keeps every GitHub Actions SHA pin and the Containerfile's base image digest current |
+| [`images/boards.toml`](images/boards.toml) | Every physical board this repo flashes for -- one `[<board>]` table each: which variant it flashes, where its disk config lives, EDK2 firmware URL/sha256 |
+| [`images/variants.toml`](images/variants.toml) | Every OSTree/container image variant this repo builds -- one `[<name>]` table each: its `suffix` (-> `images/<suffix>/` and the package name) and `description` |
+| [`images/rock5/`](images/rock5/) | The `rock5` variant's own overlay, mirroring the top-level layout: `build_files/` (the aic8800 driver hook) and, if it ever needs one, a `system_files/` |
+| [`disk_config/`](disk_config/) | bootc-image-builder disk configs (deliberately small partition floors, not final sizes -- see the growroot service), referenced by path from `images/boards.toml` |
+| `Containerfile`, `build_files/`, `system_files/` | The OCI image, generic across every variant: base Fedora bootc (aarch64), minimal GNOME, the default account (`sysusers.d`/`tmpfiles.d`), never-blank/never-sleep power defaults (`dconf`), the root-growth service, and the shared root-fs declaration. `Containerfile` also carries an unused `chunkah-pin` stage purely so Dependabot can track that image's version too. |
+| `scripts/` | Generic, parameterized tools shared across every variant/board: firmware fetch+verify, disk composition (with GPT/MBR/ESP verification), changelog generation |
+| `.github/workflows/build.yml` | Matrixes over every variant; builds, rechunks (chunkah), signs and pushes each OCI image to GHCR (the OTA path) -- rechunking/tagging/signing all skip on pull requests, which only need to prove the image still builds |
+| `.github/workflows/build-flash.yml` | Matrixes over every board to build the raw disk artifact, then a single job publishes/attaches the release for `vX.Y.Z` tags once every board's build has finished (not once per board, to avoid races on a shared release) |
+| `.github/dependabot.yml` | Keeps every GitHub Actions SHA pin and every `FROM ...@sha256:...` digest (any `Containerfile`/`Dockerfile`-named file, including the `chunkah-pin` stage) current |
 
 ## Known limitations / please report back
 
-I don't have a physical ROCK 5C to test against, so these are the things
-most likely to need a follow-up fix once this actually boots on hardware:
+This has had real hardware time on a ROCK 5C, but not a full clean
+first-flash-to-daily-use pass yet. Confirmed so far: the board boots off
+a flashed card through the EDK2/GRUB chain, GDM comes up, the baked-in
+account logs in, and the `aic_load_fw` kernel module loads (tainting the
+kernel as expected for an unsigned out-of-tree module -- not a bug).
+Still open:
 
-- **Bluetooth**: `aic8800-usb-dkms` is confirmed for Wi-Fi. Whether BT on
-  the combo chip comes up automatically or needs an extra `btattach`/udev
-  rule is untested.
+- **Wi-Fi/BT actually associating end-to-end** on the latest build --
+  earlier testing caught the kernel module *and* its firmware getting
+  silently dropped before reaching a deployed image (now fixed twice
+  over, see the `rock5` section above), but a full "connects to a
+  network" / "pairs a BT device" confirmation on that fixed build is
+  still pending.
+- **The root-growth service and the smaller raw image size** are new and
+  unverified on real hardware -- confirm the partition/filesystem
+  actually grow to fill the card on first boot, not just that the image
+  builds.
 - **Reserved firmware region size**: the firmware image is ~6.6 MiB;
   `compose-sdcard-image.sh` reserves 16 MiB for it. Should be safe
   headroom, but worth double-checking against `sgdisk -p` output on a
   flashed card if boot fails.
-- **First real boot**: partition layout is sanity-checked with
-  `sgdisk --verify` in CI, but actual firmware hand-off / GRUB / kernel
-  boot on real hardware hasn't been verified by me.
 
 If you hit any of these, please open an issue.
 
@@ -185,3 +215,4 @@ If you hit any of these, please open an issue.
   firmware for RK3588 boards
 - [`ausil/aic8800-dkms`](https://copr.fedorainfracloud.org/coprs/ausil/aic8800-dkms/) --
   Wi-Fi/BT driver COPR
+- [`coreos/chunkah`](https://github.com/coreos/chunkah) -- image rechunking
