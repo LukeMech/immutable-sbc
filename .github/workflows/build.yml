@@ -67,9 +67,8 @@ jobs:
     steps:
       # These action versions are pinned by commit SHA and kept current by
       # Dependabot (.github/dependabot.yml, github-actions ecosystem).
-      # fetch-depth: 0 + fetch-tags -- "Check package changes" below needs
-      # full history and every v-tag to find the last actual release's
-      # commit (not just whatever :latest currently points to).
+      # fetch-depth: 0 + fetch-tags -- Check package changes below needs
+      # full history to find the last release's commit.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -113,12 +112,9 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
-      # Needed before the package-delta check below can pull the
-      # currently-published :latest to diff against (this project's
-      # packages happen to be public, but logging in here costs nothing
-      # and matches what pushing/signing further down need anyway).
-      # Never on a PR or a non-default-branch ref -- nothing past this
-      # point runs there either.
+      # Needed before the package-delta check below can pull images to
+      # diff -- also gates everything past this point (never on a PR or
+      # off the default branch).
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -127,18 +123,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Diffs against the last actual *release*'s commit -- not :latest,
-      # which can drift ahead of it (a run can push and move :latest
-      # before its own release-meta job runs or completes). Every
-      # successful push also tags its own commit permanently
-      # (latest-<shortsha>, Justfile's generate-build-tags), so the last
-      # release tag's commit resolves to a real, stable image ref.
-      #
-      # Used both to build this variant's package-changelog section, and
-      # to decide below whether a schedule-triggered run (the biweekly
-      # cron fallback) actually found anything new. push/workflow_dispatch
-      # never skip on this -- those are always a deliberate rebuild,
-      # published regardless of whether package versions moved.
+      # Diffs against the last release's commit (not :latest, which can
+      # drift ahead of it) to build the changelog and, on a schedule run
+      # only, decide whether there's anything new to publish.
       - name: Check package changes
         id: check-changes
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -146,24 +133,18 @@ jobs:
           set -euo pipefail
           NEW_IMAGE="${IMAGE_NAME}:${DEFAULT_TAG}"
 
-          # Variant baked into the filenames themselves, not just the
-          # artifact name -- download-artifact only creates a per-artifact
-          # subdirectory when a `pattern` matches *multiple* artifacts; with
-          # today's single variant it always matches exactly one and
-          # extracts flat instead (confirmed: release-meta's lookup at a
-          # "changelog-<variant>/" subdirectory came up empty on a real
-          # run). Filenames make the download layout independent of how
-          # many variants ever exist.
+          # Variant baked into the filenames, not just the artifact name --
+          # download-artifact only subdirectories a `pattern` match when
+          # there's more than one (confirmed empty otherwise with today's
+          # single variant).
           PKG_CHANGELOG="package-changelog-${{ matrix.variant }}.md"
           PREV_SHA_FILE="prev_sha-${{ matrix.variant }}.txt"
 
           PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
 
-          # Walk backward commit-by-commit from the last release's tag
-          # until one with a real latest-<shortsha> tag is found --
-          # cancel-in-progress can leave a commit's own tag never pushed
-          # if that run got cancelled before reaching the Push step
-          # (confirmed happens).
+          # Walk back from the release tag for a commit with a real
+          # latest-<shortsha> tag -- cancel-in-progress can leave one
+          # never pushed (confirmed happens).
           PREV_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
           PREV_SHA=""
           if [[ -n "${PREV_TAG}" ]]; then
@@ -197,16 +178,12 @@ jobs:
             prev_sha-${{ matrix.variant }}.txt
           retention-days: 1
 
-      # Rechunking, tag generation, tagging, pushing and signing only
-      # matter for an image that's actually going to be published:
-      # - never on a PR (see Login above, gated the same way)
-      # - never on a schedule run that found no package changes -- the
-      #   biweekly cron (line 10) exists only to catch upstream updates
-      #   during quiet periods, so if dnf5 pulled in nothing new since
-      #   :latest, there's nothing to publish.
+      # Rechunk/tag/push/sign only matter for an image that's actually
+      # published: never on a PR, never on a schedule run with no package
+      # changes (the biweekly cron exists only to catch upstream updates).
       #
-      # This is optional, this provides smaller delta updates.
-      # chunkah instead of `rpm-ostree compose build-chunked-oci`
+      # Optional, smaller delta updates -- chunkah instead of
+      # `rpm-ostree compose build-chunked-oci`.
       - name: Rechunk with chunkah
         id: rechunk
         if: github.event_name != 'pull_request' && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
@@ -253,10 +230,8 @@ jobs:
 
           echo "digest=${digest}" >> $GITHUB_OUTPUT
 
-      # Marks this variant as actually published this run -- release-meta
-      # and build-flash both stay skipped (via the aggregate job below)
-      # when no variant uploads one, e.g. every variant's schedule run
-      # found no package changes.
+      # Marks this variant as published this run -- release-meta/build-flash
+      # stay skipped (via aggregate below) if no variant uploads one.
       - name: Upload published marker
         if: steps.push-image.outcome == 'success'
         run: touch published.marker
@@ -291,11 +266,9 @@ jobs:
           # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
           cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
 
-  # Bridges build_push's per-variant "did it actually publish" signal
-  # across the matrix -- a matrix job's own `outputs` only reliably
-  # exposes its *last* completed shard's value, not a real aggregate, so
-  # this checks for the marker artifact instead. Today there's only ever
-  # one variant, but this stays correct if a second one is ever added.
+  # Aggregates build_push's per-variant "published" signal -- a matrix
+  # job's own outputs only reliably expose the last shard's value, so
+  # this checks marker artifacts instead.
   aggregate:
     name: Check publish status
     needs: [discover, build_push]
@@ -320,15 +293,12 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Publishes the release (tag + changelog) as soon as the container
-  # image is live on ghcr, before build-flash.yml even starts building
-  # any disk image -- the release is about the container image (what
-  # `bootc upgrade` pulls), not the much-slower flash images. Its tag
-  # output feeds the build-flash job below.
+  # Publishes the release (tag + changelog) before build-flash.yml starts
+  # building any disk image -- the release is about the container image,
+  # not the slower flash images. Tag output feeds build-flash below.
   #
-  # Skipped entirely when nothing was published this run (see aggregate
-  # above) -- build-flash then also skips automatically, since a job's
-  # needs must have succeeded, not been skipped, by default.
+  # Skipped when nothing published this run (aggregate above) -- build-flash
+  # then skips too, since a job's needs must succeed, not just not-fail.
   release-meta:
     name: Publish release
     needs: [discover, build_push, aggregate]
@@ -374,18 +344,10 @@ jobs:
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-      # One changelog-<variant> artifact per variant, each holding the
-      # package-diff build_push already computed pre-push (see "Check
-      # package changes" above) plus that variant's previous-build git
-      # sha -- release-meta itself never pulls an image.
-      # merge-multiple -- flat layout regardless of how many artifacts
-      # match, since download-artifact only creates a per-artifact
-      # subdirectory when a `pattern` matches more than one (confirmed:
-      # with today's single variant it always matches exactly one and
-      # extracts flat instead). build_push already bakes the variant into
-      # the filenames themselves (package-changelog-<variant>.md,
-      # prev_sha-<variant>.txt), so a flat layout is unambiguous either
-      # way.
+      # Each variant's package-diff + prev-build sha, computed pre-push in
+      # build_push -- release-meta never pulls an image itself.
+      # merge-multiple: true -- flat layout regardless of match count (see
+      # build_push's same note); filenames already carry the variant.
       - name: Download changelog artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -414,8 +376,7 @@ jobs:
             fi
 
             # A changelog is a nicety, not a reason to block the release --
-            # fall back to a placeholder if build_push's artifact is
-            # somehow missing, rather than failing the job.
+            # fall back to a placeholder if the artifact's missing.
             if [[ -f "${PKG_FILE}" ]]; then
               cat "${PKG_FILE}" >> changelog.md
             else
