@@ -67,8 +67,14 @@ jobs:
     steps:
       # These action versions are pinned by commit SHA and kept current by
       # Dependabot (.github/dependabot.yml, github-actions ecosystem).
+      # fetch-depth: 0 + fetch-tags -- "Check package changes" below needs
+      # full history and every v-tag to find the last actual release's
+      # commit (not just whatever :latest currently points to).
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 #v4.0.0
@@ -121,19 +127,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Diffs against the still-live :latest (nothing's been pushed yet
-      # this run, so it's unambiguously "previous") -- both to build this
-      # variant's package-changelog section, and to decide below whether
-      # a schedule-triggered run (the biweekly cron fallback) actually
-      # found anything new. push/workflow_dispatch never skip on this --
-      # those are always a deliberate rebuild, published regardless of
-      # whether package versions moved.
+      # Diffs against the last actual *release*'s commit -- not :latest,
+      # which can drift ahead of it (a run can push and move :latest
+      # before its own release-meta job runs or completes). Every
+      # successful push also tags its own commit permanently
+      # (latest-<shortsha>, Justfile's generate-build-tags), so the last
+      # release tag's commit resolves to a real, stable image ref.
+      #
+      # Used both to build this variant's package-changelog section, and
+      # to decide below whether a schedule-triggered run (the biweekly
+      # cron fallback) actually found anything new. push/workflow_dispatch
+      # never skip on this -- those are always a deliberate rebuild,
+      # published regardless of whether package versions moved.
       - name: Check package changes
         id: check-changes
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         run: |
           set -euo pipefail
-          PREV_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest"
           NEW_IMAGE="${IMAGE_NAME}:${DEFAULT_TAG}"
 
           # Variant baked into the filenames themselves, not just the
@@ -147,6 +157,26 @@ jobs:
           PKG_CHANGELOG="package-changelog-${{ matrix.variant }}.md"
           PREV_SHA_FILE="prev_sha-${{ matrix.variant }}.txt"
 
+          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
+
+          # Walk backward commit-by-commit from the last release's tag
+          # until one with a real latest-<shortsha> tag is found --
+          # cancel-in-progress can leave a commit's own tag never pushed
+          # if that run got cancelled before reaching the Push step
+          # (confirmed happens).
+          PREV_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
+          PREV_SHA=""
+          if [[ -n "${PREV_TAG}" ]]; then
+            while IFS= read -r CANDIDATE_SHA; do
+              CANDIDATE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CANDIDATE_SHA}"
+              if podman pull --quiet "${CANDIDATE_REF}" >/dev/null 2>&1; then
+                PREV_IMAGE="${CANDIDATE_REF}"
+                PREV_SHA="${CANDIDATE_SHA}"
+                break
+              fi
+            done < <(git log --format='%h' "${PREV_TAG}")
+          fi
+
           ./scripts/diff-packages.sh "${PREV_IMAGE}" "${NEW_IMAGE}" "${PKG_CHANGELOG}"
 
           if grep -qx 'No package changes\.' "${PKG_CHANGELOG}"; then
@@ -155,16 +185,6 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-          # Our own Justfile embeds this as
-          # org.opencontainers.image.version=<tag>.<date>-<shortsha> (see
-          # `just build`'s LABELS) -- read back off the previous image so
-          # release-meta can produce a commit-range changelog without
-          # ever needing to pull an image itself.
-          PREV_SHA=""
-          if podman image exists "${PREV_IMAGE}" 2>/dev/null; then
-            PREV_SHA=$(podman inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "${PREV_IMAGE}" 2>/dev/null \
-              | grep -oE '[0-9a-f]{7,40}$' || true)
-          fi
           echo -n "${PREV_SHA}" > "${PREV_SHA_FILE}"
 
       - name: Upload changelog artifact
