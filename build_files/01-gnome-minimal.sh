@@ -4,7 +4,6 @@ set -ouex pipefail
 
 dnf5 install -y \
     glibc-langpack-en \
-    geoclue2 \
     gdm \
     gnome-shell \
     gnome-control-center \
@@ -21,8 +20,12 @@ systemctl enable gdm.service
 systemctl enable NetworkManager.service
 systemctl enable bluetooth.service
 
+# fastfetch, not screenfetch -- confirmed on real hardware that
+# screenfetch is broken here (garbled CPU/disk fields, its own grep
+# errors), unmaintained upstream. fastfetch correctly resolves the
+# aarch64 CPU name and this composefs-root disk layout.
 dnf5 install -y \
-    screenfetch \
+    fastfetch \
     btop
 
 # Hide btop from the app grid -- it's a TUI tool, still usable from a
