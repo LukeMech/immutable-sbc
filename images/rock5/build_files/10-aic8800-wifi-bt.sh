@@ -166,9 +166,11 @@ fi
 # its firmware ship as their own rpm-tracked package.
 rm -rf "/var/lib/dkms/${PACKAGE_NAME}"
 
-# `copr disable` is itself a command from the dnf5-command(copr) plugin,
-# so it has to run before that plugin package is removed below.
-dnf5 -y copr disable ausil/aic8800-dkms
+# `copr remove` (not just `disable`, which only flips enabled=0 and
+# leaves the .repo file and its imported GPG key on disk) is itself a
+# command from the dnf5-command(copr) plugin, so it has to run before
+# that plugin package is removed below.
+dnf5 -y copr remove ausil/aic8800-dkms
 dnf5 -y remove aic8800-usb-dkms aic8800-firmware dkms "kernel-devel-${KVER}" rpm-build 'dnf5-command(copr)'
 
 dnf5 -y install "${RPM_PATH}"

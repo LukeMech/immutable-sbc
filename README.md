@@ -144,7 +144,23 @@ sudo systemctl reboot
 ```
 
 Images are signed with [cosign](https://github.com/sigstore/cosign); the
-public key is at [`cosign.pub`](cosign.pub).
+public key -- the same one baked into the image at
+`/etc/pki/containers/lukemech-cosign.pub` -- lives at
+[`system_files/etc/pki/containers/lukemech-cosign.pub`](system_files/etc/pki/containers/lukemech-cosign.pub)
+(one canonical copy, not duplicated at the repo root). Verify a pulled
+image yourself with:
+
+```bash
+cosign verify --key system_files/etc/pki/containers/lukemech-cosign.pub \
+  ghcr.io/lukemech/immutable-sbc-rock5:latest
+```
+
+The deployed system enforces this itself, too:
+`system_files/etc/containers/policy.json` requires a valid signature for
+anything under `ghcr.io/lukemech`, and the matching
+`system_files/etc/containers/registries.d/lukemech.yaml` points
+podman/skopeo/bootc at cosign's signature storage. `sudo bootc upgrade`
+refuses an image that isn't signed with this key.
 
 ## Rebuilding it yourself
 

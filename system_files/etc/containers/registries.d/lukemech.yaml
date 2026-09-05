@@ -1,0 +1,8 @@
+# Pairs with /etc/containers/policy.json's sigstoreSigned requirement for
+# this same scope -- build.yml's cosign signature is stored as a
+# separate, digest-derived tag (sha256-<digest>.sig) right alongside the
+# image in the same repository, not on a standalone lookaside server, so
+# this is what tells podman/skopeo/bootc where to actually find it.
+docker:
+  ghcr.io/lukemech:
+    use-sigstore-attachments: true

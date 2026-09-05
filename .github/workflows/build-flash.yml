@@ -384,6 +384,12 @@ jobs:
         if: github.event_name == 'workflow_run'
         run: |
           set -euo pipefail
+          # An annotated tag needs a tagger identity, and a fresh
+          # actions/checkout never configures one (it only ever fetches/
+          # checks out, never commits) -- confirmed: "git tag -a" here
+          # failed with "Committer identity unknown" until this was added.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           TAG="${{ steps.release-tag.outputs.tag }}"
           git tag -a "${TAG}" -m "${TAG}"
           git push origin "${TAG}"
