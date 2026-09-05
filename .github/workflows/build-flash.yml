@@ -6,13 +6,30 @@ name: Build flash image
 # (proper needs:-style dependency, one unified run to look at), gated on
 # needs: [discover, build_push] there rather than anything here. A human
 # can still run this file directly from the Actions UI too
-# (workflow_dispatch) -- that path builds and uploads the flash images
-# for inspection but never tags or publishes a release: the whole
-# release job below is gated on github.event_name == 'workflow_call',
-# which is only ever true for the former, never a manual UI run.
+# (workflow_dispatch).
+#
+# publish (declared on both triggers, so `inputs.publish` resolves
+# consistently either way) is what actually distinguishes the two --
+# build.yml's call always sets it true; a manual UI run defaults to
+# false, building and uploading the flash images for inspection but
+# never tagging or publishing a release (see the release job's `if:`
+# below). NOT github.event_name == 'workflow_call': confirmed (a real
+# run's "Publish release" job silently skipped) that a called workflow
+# sees its *caller's* original triggering event there, same as it does
+# for github.workflow -- it's never actually 'workflow_call'.
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish a tagged release (leave unchecked for a manual test run)"
+        type: boolean
+        default: false
   workflow_call:
+    inputs:
+      publish:
+        description: "Publish a tagged release"
+        type: boolean
+        default: false
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
@@ -196,14 +213,13 @@ jobs:
   release:
     name: Publish release
     needs: [discover, build]
-    # Only ever runs when build.yml invokes this file as a reusable
-    # workflow (github.event_name is only ever 'workflow_call' for that
-    # path, never for a human running this directly from the Actions UI)
-    # -- a manual run stops after the "build" job above (flash images
-    # built and uploaded for inspection), skipping this entire job:
-    # nothing here (changelog, tag, GitHub Release) makes sense without
-    # an actual release to attach it to.
-    if: github.event_name == 'workflow_call'
+    # Only ever runs when the caller (build.yml, or a human from the
+    # Actions UI) explicitly asked for it via the publish input -- a
+    # plain manual run defaults it to false and stops after the "build"
+    # job above (flash images built and uploaded for inspection),
+    # skipping this entire job: nothing here (changelog, tag, GitHub
+    # Release) makes sense without an actual release to attach it to.
+    if: inputs.publish == true
     runs-on: ubuntu-26.04-arm
     permissions:
       contents: write

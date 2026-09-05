@@ -220,6 +220,8 @@ jobs:
     needs: [discover, build_push]
     if: github.event_name != 'pull_request'
     uses: ./.github/workflows/build-flash.yml
+    with:
+      publish: true
     permissions:
       contents: write
       packages: read
