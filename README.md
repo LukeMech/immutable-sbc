@@ -176,10 +176,14 @@ cosign verify --key system_files/etc/pki/containers/lukemech-cosign.pub \
 The deployed system enforces this itself, too, and strictly:
 `system_files/etc/containers/policy.json`'s top-level default is
 `reject`, with exactly one carve-out -- `ghcr.io/lukemech` requires a
-valid cosign signature. Nothing else is allowed at all: no other
-registry, and not even local `containers-storage` (so a plain `podman
-pull` of anything else, including toolbox/distrobox images, is refused
-outright until explicitly added to the policy). The matching
+valid cosign signature, honored for both the `docker` transport (network
+pulls) and the `containers-storage` transport (images already resolved
+into local storage, which is what `bootc-image-builder` installs from
+when baking a fresh disk image -- without this second entry it would
+reject its own build). Nothing else is allowed at all: no other
+registry, docker or containers-storage, so a plain `podman pull` of
+anything else, including toolbox/distrobox images, is refused outright
+until explicitly added to the policy. The matching
 `system_files/etc/containers/registries.d/lukemech.yaml` points
 podman/skopeo/bootc at cosign's signature storage.
 `system_files/usr/lib/bootc/install/01-sigpolicy.toml` sets
