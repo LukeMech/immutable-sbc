@@ -256,6 +256,34 @@ jobs:
           TAG="$(printf '%s-%02d' "${PREFIX}" "${NEXT_NUM}")"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
+      # The "build" job (matrixed per board, runs before this one) names
+      # its own artifacts before the release tag above even exists, so
+      # the version has to be spliced in here instead -- rename each
+      # .img.zst, and rewrite its .sha256 file's *contents* to match (not
+      # just its own filename): sha256sum embeds the checksummed file's
+      # name inside the file, so `sha256sum -c` would otherwise look for
+      # a file that no longer exists post-rename. Re-hashing isn't
+      # needed -- the bytes haven't changed, only the name.
+      - name: Add version to release asset filenames
+        env:
+          TAG: ${{ steps.release-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          find artifacts -type f -name '*.img.zst' -print0 |
+            while IFS= read -r -d '' f; do
+              dir=$(dirname "${f}")
+              base=$(basename "${f}" .img.zst)
+              new="${dir}/${base}-${TAG}.img.zst"
+              mv "${f}" "${new}"
+
+              sha_file="${dir}/${base}.img.zst.sha256"
+              if [[ -f "${sha_file}" ]]; then
+                hash=$(awk '{print $1}' "${sha_file}")
+                echo "${hash}  $(basename "${new}")" > "${dir}/${base}-${TAG}.img.zst.sha256"
+                rm -f "${sha_file}"
+              fi
+            done
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:

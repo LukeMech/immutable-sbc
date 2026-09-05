@@ -203,13 +203,23 @@ jobs:
   # triggered run elsewhere: build-flash.yml executes as part of *this*
   # workflow run (same run page, same concurrency-visible unit), which is
   # what jobs.<id>.uses (a reusable workflow call) gets you that firing
-  # off a separate run via the API never would. No permissions: block
-  # needed here -- build-flash.yml's own jobs already declare exactly
-  # what they need (contents: write for its release job, contents: read
-  # for its build job), and those apply as-is unless a caller explicitly
-  # narrows them.
+  # off a separate run via the API never would.
+  #
+  # permissions: here is required, not optional -- a called workflow's
+  # nested jobs are capped by whatever the *calling* job grants (not by
+  # this repo's own per-job permissions inside build-flash.yml, contrary
+  # to what an earlier version of this comment assumed); with no
+  # permissions: here at all, GitHub fell back to this repo's default
+  # GITHUB_TOKEN permission (read), and failed outright with "The nested
+  # job 'release' is requesting 'contents: write', but is only allowed
+  # 'contents: read'." Matches the superset of what build-flash.yml's own
+  # jobs need (contents: write + packages: read for its release job;
+  # its build job only needs contents: read, already covered by this).
   build-flash:
     name: Build flash images
     needs: [discover, build_push]
     if: github.event_name != 'pull_request'
     uses: ./.github/workflows/build-flash.yml
+    permissions:
+      contents: write
+      packages: read
