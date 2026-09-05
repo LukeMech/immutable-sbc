@@ -1,11 +1,10 @@
 #!/bin/bash
 #
-# Prints name<TAB>epoch:version-release for every installed package in the
-# given image, one per line, sorted by name -- gpg-pubkey entries filtered
-# out (rpm's own pseudo-package for each imported signing key; a repo
-# rotating its key would otherwise look like a package "change" with
-# nothing else different). Shared by diff-packages.sh and build.yml's own
-# pre-push package-delta check, so both agree on what counts as "changed".
+# Prints name<TAB>epoch:version-release for every installed package,
+# sorted by name -- gpg-pubkey entries filtered out (rpm's pseudo-package
+# per imported signing key; a repo rotating its key would otherwise look
+# like a package "change"). Shared by diff-packages.sh and build.yml's
+# own pre-push check, so both agree on what counts as "changed".
 #
 # Usage: list-packages.sh <image-ref>
 

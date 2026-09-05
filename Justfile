@@ -75,27 +75,14 @@ sudoif command *args:
     }
     sudoif {{ command }} {{ args }}
 
-# This Justfile recipe builds a container image using Podman.
+# Builds a container image using Podman.
 #
-# Arguments:
-#   $variant - Which images/<variant>/ to build (default: "rock5"). Selects
-#             the OSTree/container image variant -- see images/variants.toml.
-#             $target_image's default is always "<image_name>-<variant>",
-#             appended automatically -- never edit image-template.env's
-#             IMAGE_NAME to include a variant.
-#   $target_image - The tag you want to apply to the image (default: $image_name-$variant).
-#   $tag - The tag for the image (default: $default_tag).
-#
-# The script constructs the version string using the tag and the current date.
-# If the git working directory is clean, it also includes the short SHA of the current HEAD.
+# $variant - Which images/<variant>/ to build (default: "rock5"); see
+#           images/variants.toml. $target_image's default already appends
+#           it -- never edit image-template.env's IMAGE_NAME to include one.
 #
 # just build $variant $target_image $tag
-#
-# Example usage:
-#   just build rock5 myimage mytag
-#
-# This will build an image 'myimage:mytag' from images/rock5/
-#
+# Example: just build rock5 myimage mytag  (builds 'myimage:mytag' from images/rock5/)
 
 # Build the image using the specified parameters
 build $variant="rock5" $target_image=(image_name + "-" + variant) $tag=default_tag:
@@ -114,8 +101,7 @@ build $variant="rock5" $target_image=(image_name + "-" + variant) $tag=default_t
         LABELS+=("--label" "org.opencontainers.image.version={{ default_tag }}.$(date +%Y%m%d)-${GIT_SHA}")
     fi
 
-    # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images
-    # The metadata by itself is not going to do anything, you choose if you want your image to be on ArtifactHub or not.
+    # Image metadata for https://artifacthub.io/ (optional, opt-in -- doesn't do anything by itself).
     LABELS+=("--label" "io.artifacthub.package.deprecated=false")
     LABELS+=("--label" "io.artifacthub.package.keywords={{ image_keywords }}")
     LABELS+=("--label" "io.artifacthub.package.license=Apache-2.0")
@@ -133,18 +119,16 @@ build $variant="rock5" $target_image=(image_name + "-" + variant) $tag=default_t
 
 # Split the image for smaller updates.
 #
-# The chunkah image reference is hardcoded below, not pinned by digest --
+# chunkah image hardcoded below, not pinned by digest -- unlike
+# fedora-bootc's near-daily "44" rebuilds (see Containerfile),
 # quay.io/coreos/chunkah:latest is a small, deliberately-released utility
-# image (unlike fedora-bootc's own near-daily rebuilds of its "44" tag,
-# see Containerfile's comment on that), so there's no equivalent stale-
-# digest risk to guard against here.
+# image with no equivalent stale-digest risk.
 #
 # Used instead of `rpm-ostree compose build-chunked-oci`: the latter has
 # repeatedly dropped kernel-adjacent rpm content when re-deriving the
-# image (a custom kmod rpm, then a separate firmware-only rpm required
-# by it -- see images/rock5's aic8800 driver). chunkah has no
-# special-casing for bootable/kernel content at all; it chunks by rpm
-# ownership uniformly, so this kind of content survives it intact.
+# image (a custom kmod rpm + firmware rpm -- see images/rock5's aic8800
+# driver). chunkah has no special-casing for bootable/kernel content; it
+# chunks by rpm ownership uniformly, so this content survives intact.
 rechunk $target_image=image_name $tag=default_tag:
     #!/usr/bin/env bash
 
@@ -152,13 +136,11 @@ rechunk $target_image=image_name $tag=default_tag:
 
     CHUNKAH_IMAGE="quay.io/coreos/chunkah:latest"
 
-    # You may run into space issues on github runners as we are making a
-    # complete copy of the image, which likely has no shared layers, unless your
-    # base image is also using chunkah
+    # May hit space issues on GitHub runners -- this makes a complete copy
+    # of the image with no shared layers, unless the base image also uses chunkah.
     CHUNKAH_CONFIG_FILE="$(mktemp)"
 
-    # You may omit the current directory here if you are confident that you
-    # won't run out of space on /tmp for your image
+    # Omit the current directory here if /tmp has enough space for the image.
     CHUNKAH_OUTPUT_DIR="$(mktemp -d ./"${target_image}"_chunkah_XXXXXX)"
 
     trap 'rm -f "${CHUNKAH_CONFIG_FILE}"; rm -rf "${CHUNKAH_OUTPUT_DIR}"' EXIT
@@ -237,23 +219,8 @@ image_name $target_image=image_name:
 
     echo "${image_name}"
 
-# Command: _rootful_load_image
-# Description: This script checks if the current user is root or running under sudo. If not, it attempts to resolve the image tag using podman inspect.
-#              If the image is found, it loads it into rootful podman. If the image is not found, it pulls it from the repository.
-#
-# Parameters:
-#   $target_image - The name of the target image to be loaded or pulled.
-#   $tag - The tag of the target image to be loaded or pulled. Default is 'default_tag'.
-#
-# Example usage:
-#   _rootful_load_image my_image latest
-#
-# Steps:
-# 1. Check if the script is already running as root or under sudo.
-# 2. Check if target image is in the non-root podman container storage)
-# 3. If the image is found, load it into rootful podman using podman scp.
-# 4. If the image is not found, pull it from the remote repository into reootful podman.
-
+# Loads/pulls $target_image:$tag into rootful podman if this shell isn't
+# already root -- root's podman storage is separate from the user's.
 _rootful_load_image $target_image=image_name $tag=default_tag:
     #!/usr/bin/env bash
     set -eoux pipefail
@@ -286,14 +253,8 @@ _rootful_load_image $target_image=image_name $tag=default_tag:
         just sudoif podman pull "${target_image}:${tag}"
     fi
 
-# Build a bootc bootable image using Bootc Image Builder (BIB)
-# Converts a container image to a bootable image
-# Parameters:
-#   target_image: The name of the image to build (ex. localhost/fedora), already
-#                 including its variant -- this recipe doesn't append one itself.
-#   tag: The tag of the image to build (ex. latest)
-#   type: The type of image to build (ex. qcow2, raw, iso)
-#   config: The configuration file to use for the build (default: disk_config/disk.toml)
+# Build a bootable image via Bootc Image Builder (BIB).
+# target_image already includes its variant -- this recipe doesn't append one.
 
 # Example: just _rebuild-bib localhost/fedora latest qcow2 disk_config/disk.toml
 _build-bib $target_image $tag $type $config: (_rootful_load_image target_image tag)
@@ -325,14 +286,8 @@ _build-bib $target_image $tag $type $config: (_rootful_load_image target_image t
     sudo rmdir $BUILDTMP
     sudo chown -R $USER:$USER output/
 
-# Podman builds the image from the Containerfile and creates a bootable image
-# Parameters:
-#   variant: Which images/<variant>/ to (re)build -- appended onto
-#           target_image's default automatically, same as `build`.
-#   target_image: The name of the image to build (ex. localhost/fedora)
-#   tag: The tag of the image to build (ex. latest)
-#   type: The type of image to build (ex. qcow2, raw, iso)
-#   config: The configuration file to use for the build (deafult: disk_config/disk.toml)
+# Builds the image via the Containerfile, then a bootable image via BIB.
+# variant is appended onto target_image's default automatically, same as `build`.
 
 # Example: just _rebuild-bib rock5 localhost/fedora-rock5 latest qcow2 disk_config/disk.toml
 _rebuild-bib $variant $target_image $tag $type $config: (build variant target_image tag) && (_build-bib target_image tag type config)

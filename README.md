@@ -71,8 +71,9 @@ turned up two separate ways bare/upstream-owned files were getting
 dropped before ever reaching a deployed board).
 
 **A container image** on `ghcr.io/lukemech/immutable-sbc-rock5`, rebuilt
-nightly and on every push to `main`. Once installed, `bootc upgrade` pulls
-updates the same way any bootc/ostree system does -- no reflashing
+on every push to `main`, plus a biweekly schedule (`build.yml`) as a
+fallback for quiet periods with no pushes. Once installed, `bootc upgrade`
+pulls updates the same way any bootc/ostree system does -- no reflashing
 required. Images are rechunked with [chunkah](https://github.com/coreos/chunkah)
 (`just rechunk`, in the `Justfile`) rather than `rpm-ostree compose
 build-chunked-oci` -- chunkah has no special-casing for bootable/kernel
@@ -88,8 +89,12 @@ Flashes the `rock5` variant above.
 
 - **A microSD/eMMC image** (`.raw`, zstd-compressed) -- the only thing
   the *Build flash image* workflow and [Release](../../releases) assets
-  actually produce. Built on demand, or attached to a [Release](../../releases)
-  when a `vX.Y.Z` tag is pushed.
+  actually produce. Built on demand via a manual dispatch, or
+  automatically attached to the [Release](../../releases) that
+  `build.yml`'s `release-meta` job creates and tags itself
+  (`v<fedora-version>.<date>`, e.g. `v44.20260905`, auto-incrementing
+  per day if more than one lands the same day) once the container image
+  has published.
 
 `just build-qcow2`/`just build-iso` also exist in the Justfile (see
 "Rebuilding it yourself" below), but neither is part of this pipeline or
@@ -130,9 +135,12 @@ mainline Linux, so no vendor kernel is used.
 
 ### Flashing
 
-1. Download the latest `immutable-sbc-rock-5c.img.zst` from a
-   [Release](../../releases) or a *Build flash image* workflow run.
-2. Decompress and write it to a microSD card or eMMC module (≥8 GiB):
+1. Download the latest disk image from a [Release](../../releases) --
+   `immutable-sbc-rock-5c-<tag>.img.zst`, e.g.
+   `immutable-sbc-rock-5c-v44.20260905.img.zst` -- or, unversioned, from a
+   *Build flash image* workflow run's artifact.
+2. Decompress and write it to a microSD card or eMMC module (≥8 GiB),
+   substituting the filename you actually downloaded:
 
    ```bash
    zstd -d immutable-sbc-rock-5c.img.zst -o immutable-sbc-rock-5c.raw
@@ -208,10 +216,6 @@ just build              # container image, variant defaults to "rock5"
 just build-raw          # disk image for the rock-5c board -- what CI actually ships
 ```
 
-`build-qcow2` also exists for local VM testing, but isn't part of this
-project's CI and isn't currently verified. `build-iso` is broken as of
-this writing (references the now-removed `disk_config/iso.toml`).
-
 Every recipe takes an optional `variant` argument (defaults to `rock5`,
 this repo's only variant today) -- e.g. `just build rock5`. Package name is
 always `<IMAGE_NAME>-<variant>` (`image-template.env`'s `IMAGE_NAME` is
@@ -231,7 +235,7 @@ for the general shape of this repo -- `Containerfile` + `build_files/` +
 | [`disk_config/`](disk_config/) | bootc-image-builder disk configs (deliberately small partition floors, not final sizes -- see the growroot service), referenced by path from `images/boards.toml` |
 | `Containerfile`, `build_files/`, `system_files/` | The OCI image, generic across every variant: base Fedora bootc (aarch64), minimal GNOME, the default account (`sysusers.d`/`tmpfiles.d`), never-blank/never-sleep power defaults (`dconf`), the root-growth service, the shared root-fs declaration, and the enforced container signature policy (`policy.json`, `registries.d/lukemech.yaml`, `bootc/install/01-sigpolicy.toml`). Base image and chunkah (Justfile's `rechunk` recipe) are both floating tags, not digest pins -- see their own comments for why. |
 | `scripts/` | Generic, parameterized tools shared across every variant/board: firmware fetch+verify, disk composition (with GPT/MBR/ESP verification), changelog generation |
-| `.github/workflows/build.yml` | Matrixes over every variant; builds, rechunks (chunkah), signs and pushes each OCI image to GHCR (the OTA path) on every push to `main`, its own biweekly schedule, or manual dispatch -- rechunking/tagging/signing all skip on pull requests, which only need to prove the image still builds. Every variant diffs its freshly built image against the still-live `:latest` (`scripts/diff-packages.sh`) right before pushing; a schedule run (the biweekly cron's only reason to exist -- catching upstream package updates during quiet periods) that finds no package changes skips publishing/signing/releasing entirely, while a push or manual dispatch always publishes regardless. Its own `release-meta` job then publishes a release (tagged `v<fedora-version>.<date>.<N>`, auto-incrementing per day) with a changelog built from that same pre-computed package diff, as soon as the container image itself is live on GHCR -- before build-flash.yml even starts, since the release is about the container image someone's `bootc upgrade` already pulled, not the (much slower) disk images. |
+| `.github/workflows/build.yml` | Matrixes over every variant; builds, rechunks (chunkah), pushes and signs each OCI image to GHCR (the OTA path) on every push to `main`, its own biweekly schedule, or manual dispatch -- rechunking/tagging/signing all skip on pull requests, which only need to prove the image still builds. Every variant diffs its freshly built image against the last release's commit -- walking back through git tag/commit history (`scripts/diff-packages.sh` / `scripts/list-packages.sh`) for one with a real, actually-pushed `latest-<shortsha>` tag, not just `:latest` (which can drift ahead of the last release) -- right before pushing; a schedule run (the biweekly cron's only reason to exist -- catching upstream package updates during quiet periods) that finds no package changes skips publishing/signing/releasing entirely, while a push or manual dispatch always publishes regardless. Its own `release-meta` job then publishes a release (tagged `v<fedora-version>.<date>.<N>`, auto-incrementing per day) with a changelog built from that same pre-computed package diff, as soon as the container image itself is live on GHCR -- before build-flash.yml even starts, since the release is about the container image someone's `bootc upgrade` already pulled, not the (much slower) disk images. |
 | `.github/workflows/build-flash.yml` | Called as a reusable workflow (`uses:`, not a separate triggered run) only after build.yml's `release-meta` job has already published a release -- receives that release's tag as an input and builds each board's raw disk image, attaching it to that already-live release once ready. A direct `workflow_dispatch` builds the flash images without attaching them to anything (no tag to attach to). |
 | `.github/dependabot.yml` | Keeps every GitHub Actions SHA pin current; its docker-ecosystem entry stays configured for whenever a `FROM ...@sha256:...` digest pin is reintroduced, but nothing currently uses one |
 

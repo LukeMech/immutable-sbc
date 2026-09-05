@@ -1,36 +1,32 @@
 # Every physical, flashable board this repo builds for -- what
-# build-flash.yml matrixes over. One board doesn't need its own entry in
-# images/variants.toml (its config never needs more than a few fields +
-# maybe a firmware blob's URL/checksum, all of which fit here); a
-# variant does have its own images/<suffix>/ directory, since it can
-# bundle actual build hook scripts and system_files/ overlays that vary
-# in shape per variant.
+# build-flash.yml matrixes over. A board's config fits here (a few
+# fields, maybe a firmware URL/checksum); a variant gets its own
+# images/<suffix>/ directory instead, since it can bundle build hook
+# scripts and system_files/ overlays.
 #
 # build-flash.yml's "Load board config" step reads this file directly --
 # adding a board is just adding a [<name>] table here, no workflow
 # changes needed.
 #
-# Each board picks which images/<variant>/ image it flashes (`variant`)
-# and declares everything needed to turn that image into a disk for this
-# specific board: the bootc-image-builder disk config and, if the board
-# needs one, firmware that has to be embedded on the disk itself.
+# Each board picks which images/<variant>/ image it flashes and declares
+# what's needed to turn it into a disk: the bootc-image-builder disk
+# config and, if needed, firmware embedded on the disk itself.
 
 [rock-5c]
 board = "Radxa ROCK 5C (RK3588S)"
 # Which variant's suffix (images/variants.toml) this board flashes --
-# selects both the images/<suffix>/ directory and the
-# "immutable-sbc-<suffix>" package name.
+# selects the images/<suffix>/ directory and the "immutable-sbc-<suffix>"
+# package name.
 variant = "rock5"
 disk_config = "disk_config/disk.toml"
 
-# The ROCK 5C has no onboard SPI-NOR, so UEFI firmware has to be embedded
-# on the same disk as the OS (see scripts/compose-sdcard-image.sh). The
-# edk2_* fields are optional -- only boards that need firmware embedded
-# on the disk declare them.
+# No onboard SPI-NOR, so UEFI firmware has to be embedded on the same
+# disk as the OS (see scripts/compose-sdcard-image.sh). edk2_* fields are
+# optional -- only boards needing embedded firmware declare them.
 #
-# Pinned to a specific release + sha256 on purpose: this blob gets dd'd
-# onto every image shipped for this board, so an unverified/floating
-# download here would be a supply-chain hole in the whole pipeline.
+# Pinned to a release + sha256 on purpose: this blob gets dd'd onto every
+# image shipped for this board, so an unverified/floating download would
+# be a supply-chain hole.
 # Upstream: https://github.com/edk2-porting/edk2-rk3588
 # Build used here: https://github.com/kwankiu/edk2-rk3588
 edk2_url = "https://github.com/kwankiu/edk2-rk3588/releases/download/v1.1/rock-5c_UEFI_Release_v1.1.img"

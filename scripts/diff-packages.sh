@@ -2,20 +2,14 @@
 #
 # Package-changes section of the changelog: an rpm -qa diff between
 # <previous-image-ref> and <new-image-ref>, split into added/removed/
-# updated (each only shown if non-empty) -- a plain "No package changes."
-# line if nothing differs, or "## Initial build" if <previous-image-ref>
-# doesn't exist yet.
+# updated (each shown only if non-empty), or "No package changes."/
+# "## Initial build" if there's nothing to diff.
 #
-# Runs pre-push, in build.yml's build_push job, right after the image is
-# built -- not just for the changelog, but because that's also how a
-# schedule-triggered run (the biweekly cron fallback for quiet periods)
-# decides whether it found anything new to publish at all: grep the
-# output for the "No package changes." line.
+# Runs pre-push, in build.yml's build_push job -- also how a
+# schedule-triggered run decides whether it found anything new to
+# publish: grep the output for "No package changes."
 #
 # Usage: diff-packages.sh <previous-image-ref> <new-image-ref> <output.md>
-#
-# <previous-image-ref> may not exist yet (first-ever build) -- that's
-# handled, it just means no diff, only "initial build".
 
 set -euo pipefail
 
@@ -45,10 +39,9 @@ fi
 : >"${OUTPUT}"
 
 if [[ "${HAVE_PREV}" -eq 1 ]]; then
-    # name<TAB>previous<TAB>new for every package on either side ('-' for
-    # whichever side doesn't have it), routed into one of three buckets --
-    # never a single mixed table, so a release with (say) only updates
-    # doesn't show two empty "Added"/"Removed" headers for nothing.
+    # name<TAB>previous<TAB>new for every package ('-' if a side lacks it),
+    # routed into one of three buckets -- so a release with only updates
+    # doesn't show two empty "Added"/"Removed" headers.
     while IFS=$'\t' read -r name prev new; do
         if [[ "${prev}" == "${new}" ]]; then
             continue

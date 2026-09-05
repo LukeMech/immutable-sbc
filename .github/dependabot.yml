@@ -1,12 +1,8 @@
 # https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
 #
-# github-actions: keeps every `uses:` commit-SHA pin in .github/workflows
-# up to date.
-# docker: would keep any `FROM ...@sha256:...` digest in Containerfile up
-# to date -- there isn't one right now (fedora-bootc:44 and, in the
-# Justfile's `rechunk` recipe, chunkah:latest are both floating tags on
-# purpose, see their own comments), but this stays configured for
-# whenever a digest pin is reintroduced.
+# github-actions: keeps every `uses:` commit-SHA pin up to date.
+# docker: no digest pin exists yet (Containerfile/Justfile use floating
+# tags on purpose) -- kept configured for whenever one is added.
 
 version: 2
 updates:

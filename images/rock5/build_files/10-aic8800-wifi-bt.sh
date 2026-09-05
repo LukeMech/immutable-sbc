@@ -4,34 +4,25 @@ set -ouex pipefail
 
 ### AIC8800 Wi-Fi/BT driver (ROCK 5C onboard AIC8800D80 combo chip)
 #
-# Built once, at container *build* time in a writable layer, from the
-# aic8800-usb-dkms COPR package -- but the build's own dkms/kernel-devel
-# tooling, and the aic8800-usb-dkms/aic8800-firmware packages themselves,
-# never ship in the final image. Two separate, confirmed failure modes
-# drove this:
+# Built once, at container *build* time, from the aic8800-usb-dkms COPR
+# package -- but the build's dkms/kernel-devel tooling and the COPR
+# packages themselves never ship in the final image. Two confirmed
+# failure modes drove this:
 #
-# 1. A bare `dkms install` (a raw file copy, untracked by rpm) does not
-#    reliably survive this pipeline's rechunking pass -- confirmed: the
-#    .ko was present right after this script ran, but missing from the
-#    deployed system.
-# 2. aic8800-usb-dkms `Requires: kernel-devel`, and aic8800-firmware is
-#    only required by aic8800-usb-dkms -- so this script's *own* final
-#    cleanup (`dnf5 remove ... kernel-devel-${KVER} ...`) cascades:
-#    dnf5 removes aic8800-usb-dkms as a now-unsatisfiable dependent
-#    package, which in turn leaves aic8800-firmware an orphaned
-#    dependency and removes that too. Confirmed via the build log
-#    ("Removing dependent packages: aic8800-usb-dkms" / "Removing
-#    unused dependencies: ... aic8800-firmware"). No rechunker is even
-#    involved -- the firmware is gone before the image layer is ever
-#    committed.
+# 1. A bare `dkms install` (untracked by rpm) doesn't reliably survive
+#    this pipeline's rechunking pass -- confirmed: the .ko was present
+#    right after this script ran, but missing from the deployed system.
+# 2. aic8800-usb-dkms Requires: kernel-devel, and aic8800-firmware is
+#    only required by aic8800-usb-dkms -- so this script's own cleanup
+#    (`dnf5 remove ... kernel-devel-${KVER} ...`) cascades and removes
+#    both as now-unsatisfiable/orphaned (confirmed via build log). No
+#    rechunker involved -- gone before the image layer is even committed.
 #
-# Fix for both: never let the final image depend on anything from
-# aic8800-usb-dkms/aic8800-firmware surviving. Build the module with
-# dkms as before, but pull both the compiled .ko *and* the firmware
-# files it needs out into our own self-contained "kmod-*" RPM before
-# the cleanup step runs, same as how ublue-os images ship extra kernel
-# modules (nvidia, v4l2loopback, ...) -- rpm-tracked, not a bare file,
-# and with no runtime dependency on the upstream COPR packages at all.
+# Fix: never depend on either COPR package surviving. Build the module
+# with dkms as before, but pull the compiled .ko and its firmware into
+# our own self-contained "kmod-*" RPM before cleanup runs, same as how
+# ublue-os images ship extra kernel modules -- rpm-tracked, no runtime
+# dependency on the upstream COPR packages.
 #
 # https://copr.fedorainfracloud.org/coprs/ausil/aic8800-dkms/
 
@@ -45,14 +36,11 @@ dnf5 -y install 'dnf5-command(copr)'
 dnf5 -y copr enable ausil/aic8800-dkms
 
 # aic8800-usb-dkms's %post scriptlet auto-runs `dkms install` against
-# `$(uname -r)` -- the *build host's* running kernel (this GitHub Actions
-# runner's own kernel), which has nothing to do with the Fedora aarch64
-# kernel this image ships. That build fails (wrong kernel headers) and
-# dnf5 treats the failed scriptlet as fatal to the whole transaction.
-# dnf5's tsflags only has the coarse `noscripts` (skips every scriptlet,
-# not just %post -- "nopost" is a raw rpm flag, not a dnf tsflags value),
-# which is fine here: we don't need any of those side effects, we drive
-# dkms ourselves below, pinned to the kernel we're actually building for.
+# `$(uname -r)` -- the build host's kernel, unrelated to the Fedora
+# aarch64 kernel this image ships. That build fails and dnf5 treats it as
+# fatal. dnf5's tsflags only has the coarse `noscripts` ("nopost" is a raw
+# rpm flag, not a dnf tsflags value) -- fine here, since we drive dkms
+# ourselves below, pinned to the kernel we're actually building for.
 dnf5 -y install --setopt=tsflags=noscripts rpm-build dkms "kernel-devel-${KVER}" aic8800-usb-dkms
 
 SRC_DIR=$(find /usr/src -maxdepth 1 -iname 'aic8800*' -type d -print -quit)
@@ -60,11 +48,10 @@ if [[ -z "${SRC_DIR}" ]]; then
     echo "error: aic8800-usb-dkms didn't drop sources under /usr/src" >&2
     exit 1
 fi
-# dkms.conf is the package's own source of truth for its name/version --
-# read it instead of guessing at the source directory's naming scheme.
-# It's not safe to `source` directly: it references dkms-internal
-# variables (e.g. kernel_source_dir) that only the real `dkms` tool
-# defines before evaluating it, so pull out just the two fields we need.
+# dkms.conf is the package's source of truth for name/version -- read it
+# instead of guessing the source directory's naming scheme. Not safe to
+# `source` directly: it references dkms-internal variables (e.g.
+# kernel_source_dir) only the real `dkms` tool defines first.
 dkms_conf_var() {
     grep -E "^${1}=" "${SRC_DIR}/dkms.conf" | head -1 | sed -E "s/^${1}=//; s/^\"//; s/\"\$//"
 }
@@ -76,8 +63,7 @@ if [[ -z "${PACKAGE_NAME}" || -z "${PACKAGE_VERSION}" ]]; then
 fi
 
 # Build only -- unlike `dkms install`, `dkms build` never touches
-# /usr/lib/modules. It leaves the compiled .ko under /var/lib/dkms,
-# which is where we pick it up from below.
+# /usr/lib/modules; it leaves the .ko under /var/lib/dkms, picked up below.
 dkms add -m "${PACKAGE_NAME}" -v "${PACKAGE_VERSION}"
 dkms build -m "${PACKAGE_NAME}" -v "${PACKAGE_VERSION}" -k "${KVER}"
 
@@ -88,21 +74,18 @@ if [[ ${#BUILT_MODULES[@]} -eq 0 ]]; then
     exit 1
 fi
 
-# aic8800-usb-dkms Requires: aic8800-firmware (a separate, firmware-only
-# COPR subpackage) -- pull its usb/ files in now, while it's still
-# installed, rather than depend on it surviving this script's own
-# cleanup below.
+# aic8800-usb-dkms Requires: aic8800-firmware -- pull its usb/ files in
+# now, while installed, rather than depend on it surviving cleanup below.
 FW_SRC_DIR="/usr/lib/firmware/aic8800/usb"
 if [[ ! -d "${FW_SRC_DIR}" ]]; then
     echo "error: aic8800-firmware didn't install anything under ${FW_SRC_DIR}" >&2
     exit 1
 fi
 
-# Stage the built module and firmware into a throwaway buildroot and
-# wrap them in a minimal binary RPM -- %prep/%build/%install are empty
-# since the files are already in place; debug_package/__os_install_post
-# are disabled so rpmbuild's strip/debuginfo machinery doesn't touch an
-# already-built .ko.
+# Stage the module + firmware into a throwaway buildroot, wrap in a
+# minimal binary RPM -- %prep/%build/%install empty since files are
+# already in place; debug_package/__os_install_post disabled so
+# rpmbuild's strip/debuginfo doesn't touch an already-built .ko.
 RPM_NAME="kmod-${PACKAGE_NAME}"
 BUILDROOT=$(mktemp -d)
 MODULE_DIR="${BUILDROOT}/usr/lib/modules/${KVER}/extra/${PACKAGE_NAME}"
@@ -113,16 +96,12 @@ FW_DIR="${BUILDROOT}${FW_SRC_DIR}"
 install -d "${FW_DIR}"
 cp -a "${FW_SRC_DIR}/." "${FW_DIR}/"
 
-# Everything needed from aic8800-usb-dkms/aic8800-firmware is already
-# copied into BUILDROOT above, and rpmbuild packages purely from
-# BUILDROOT's contents -- it doesn't care whether the originals are
-# still installed. So build our own rpm first, then remove every
-# COPR/build package in one shot below (including aic8800-usb-dkms/
-# aic8800-firmware, which ship the exact same paths --
-# /usr/lib/modules/.../aic8800-usb, /usr/lib/firmware/aic8800/usb -- our
-# new rpm is about to claim), and only then install it. One remove pass
-# instead of two, while still avoiding ever depending on rpm's
-# shared-identical-file tolerance to install alongside the originals.
+# Everything needed is already copied into BUILDROOT, and rpmbuild
+# packages purely from its contents -- doesn't care if the originals are
+# still installed. So build our rpm first, then remove every COPR/build
+# package in one shot (including aic8800-usb-dkms/aic8800-firmware, which
+# ship the same paths our new rpm is about to claim), and only then
+# install it -- one remove pass, no reliance on rpm's shared-file tolerance.
 SPEC=$(mktemp --suffix=.spec)
 cat > "${SPEC}" <<EOF
 %global debug_package %{nil}
@@ -161,24 +140,21 @@ if [[ -z "${RPM_PATH}" ]]; then
     exit 1
 fi
 
-# dkms's own tracking tree for this module (sources, build logs, the
-# .ko copy we just packaged from) is disposable now that the module and
-# its firmware ship as their own rpm-tracked package.
+# dkms's tracking tree for this module is disposable now that the module
+# and firmware ship as their own rpm-tracked package.
 rm -rf "/var/lib/dkms/${PACKAGE_NAME}"
 
-# `copr remove` (not just `disable`, which only flips enabled=0 and
-# leaves the .repo file and its imported GPG key on disk) is itself a
-# command from the dnf5-command(copr) plugin, so it has to run before
-# that plugin package is removed below.
+# `copr remove` (not just `disable`, which leaves the .repo file and its
+# GPG key on disk) is itself a dnf5-command(copr) command, so it must run
+# before that plugin package is removed below.
 dnf5 -y copr remove ausil/aic8800-dkms
 dnf5 -y remove aic8800-usb-dkms aic8800-firmware dkms "kernel-devel-${KVER}" rpm-build 'dnf5-command(copr)'
 
 dnf5 -y install "${RPM_PATH}"
 
-# Fail the image build (rather than ship silently without Wi-Fi) if the
-# module or its firmware isn't actually there after the dkms/build
-# tooling -- and aic8800-usb-dkms/aic8800-firmware themselves -- are
-# gone. This is exactly the state the deployed system will be in.
+# Fail the build (rather than ship silently without Wi-Fi) if the module
+# or firmware isn't there once the dkms/build tooling and COPR packages
+# are gone -- exactly the state the deployed system will be in.
 rpm -q "${RPM_NAME}"
 find "/usr/lib/modules/${KVER}" -iname '*aic8800*' -print | grep -q .
 grep -q "${PACKAGE_NAME}" "/usr/lib/modules/${KVER}/modules.dep"

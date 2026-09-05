@@ -1,37 +1,27 @@
 #!/bin/bash
 #
 # Composes the final ROCK 5C microSD/eMMC image from two independently
-# built inputs: the ROCK 5C EDK2 UEFI firmware image (fetch-edk2-
-# firmware.sh) and a normal bootc-image-builder "raw" output (ESP + boot
-# + root). No onboard SPI-NOR on this board, so both have to live on the
-# same medium on every image we ship.
+# built inputs: the EDK2 UEFI firmware image and a bootc-image-builder
+# "raw" output (ESP + boot + root). No onboard SPI-NOR on this board, so
+# both have to live on the same medium.
 #
-# The firmware is not a normal "ESP" -- the RK3588 boot ROM reads it from
-# a *fixed physical byte offset*, never via any partition table entry
-# (confirmed by the upstream project's own in-place firmware-update
-# convention: `dd ... skip=64 seek=64`, overwriting firmware bytes
-# directly without touching a target disk's existing GPT at all). So the
-# firmware's own shipped GPT is pure bookkeeping, not something the boot
-# ROM reads -- safe to discard entirely rather than preserve.
+# The firmware is not a normal ESP -- the RK3588 boot ROM reads it from a
+# fixed physical byte offset, never via a partition table entry (confirmed
+# by upstream's own in-place update convention: `dd skip=64 seek=64`,
+# never touching the target disk's GPT). So its shipped GPT is pure
+# bookkeeping, safe to discard.
 #
-# Strategy: dd the firmware payload to the front (offset 0, the boot
-# ROM's fixed expectation) and the OS image's *partition data* (not its
-# GPT) to a 16 MiB aligned offset after it, then throw away both inputs'
-# now-meaningless GPTs and build ONE fresh, self-consistent GPT for the
-# combined disk in a single sgdisk invocation -- every partition (the
-# firmware's reserved region, plus a same-size/type/GUID copy of each OS
-# partition, shifted by the same offset) added and written together,
-# atomically. An earlier version instead relocated/patched each input's
-# *inherited* GPT in place across several separate sgdisk calls, and
-# repeatedly ended up with a disk whose primary and backup GPT disagreed
-# (confirmed multiple times against real builds). Rebuilding the whole
-# table in one write sidesteps that whole class of bug -- there's no
-# partially-relocated state for primary/backup to ever disagree about.
+# Strategy: dd the firmware to offset 0 and the OS image's partition data
+# (not its GPT) to a 16 MiB aligned offset after it, then build ONE fresh
+# GPT for the combined disk in a single sgdisk invocation. An earlier
+# version instead relocated/patched each input's own GPT in place across
+# several sgdisk calls, and repeatedly left the primary and backup GPT
+# disagreeing (confirmed against real builds) -- one atomic write
+# sidesteps that.
 #
 # Filesystem UUIDs are never touched -- every OS partition is a verbatim
-# byte-range copy, never reformatted, and its GPT entry is recreated with
-# the exact same PARTUUID -- so GRUB's `search --fs-uuid` and /etc/fstab
-# keep working with zero changes.
+# copy with its PARTUUID preserved, so GRUB's `search --fs-uuid` and
+# /etc/fstab keep working unchanged.
 #
 # Usage: compose-sdcard-image.sh <firmware.img> <bib-raw-image> <output.raw>
 
@@ -52,27 +42,21 @@ RESERVED_MIB=16
 RESERVED_BYTES=$((RESERVED_MIB * 1024 * 1024))
 SECTOR=512
 ESP_GUID="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
-# Where the reserved (firmware) partition entry starts -- not sector 0 or
-# 34 (right after the mandatory protective MBR + GPT header/table), but
-# the same 2048-sector/1 MiB alignment the firmware image's own GPT
-# already uses for it (confirmed against the actual shipped firmware
-# image), and that every modern partitioning tool defaults to.
+# Reserved (firmware) partition start -- 2048-sector/1 MiB alignment,
+# matching the firmware image's own GPT (confirmed) and every modern
+# partitioning tool's default.
 RESERVED_START_SECTOR=2048
 
-# A "protective MBR" is the only kind this UEFI-only image should ever
-# have -- exactly one MBR partition entry (type 0xee, "EFI GPT
-# protective"), the other three all-zero. A genuine "hybrid" MBR (real,
-# non-zero entries alongside 0xee) is a legacy BIOS+GPT dual-boot trick
-# this image has no use for. sgdisk itself can't always tell the two
-# apart once it's already flagged the GPT as corrupt (it just hedges:
-# "Found protective or hybrid MBR..."), so check the actual bytes
-# instead of trusting that message either way.
+# This UEFI-only image should only ever have a protective MBR (one entry,
+# type 0xee, others all-zero) -- a hybrid MBR (non-zero entries alongside
+# it) is a legacy BIOS+GPT trick unused here. sgdisk itself hedges
+# ("Found protective or hybrid MBR...") once the GPT looks corrupt, so
+# check the actual bytes instead of trusting that message.
 assert_protective_mbr() {
     local img="$1"
     local hex
-    # -v: od's default behavior collapses repeated identical lines into a
-    # single "*" marker, which would silently swallow the very all-zero
-    # bytes this check exists to inspect.
+    # -v: od's default collapses repeated lines into "*", which would
+    # swallow the all-zero bytes this check exists to inspect.
     hex=$(od -v -An -tx1 -j 446 -N 64 "${img}" | tr -s ' \n' ' ')
     read -ra mbr_bytes <<<"${hex}"
     if [[ ${#mbr_bytes[@]} -ne 64 ]]; then
@@ -97,11 +81,9 @@ assert_protective_mbr() {
     done
 }
 
-# Fails loudly, with a full sgdisk -p dump for diagnosis, rather than
-# silently shipping an image sgdisk itself considers questionable --
-# `sgdisk --verify`'s own exit code already does this under `set -e`,
-# but without attributing *which* step broke it or showing what's
-# actually on the disk at the point of failure.
+# Fails loudly with a full sgdisk -p dump, rather than relying on
+# `sgdisk --verify`'s bare exit code under `set -e`, which doesn't say
+# which step broke or show the disk's actual state.
 assert_gpt_ok() {
     local img="$1"
     if ! sgdisk --verify "${img}"; then
@@ -118,14 +100,10 @@ if [[ "${FW_SIZE}" -ge "${RESERVED_BYTES}" ]]; then
     exit 1
 fi
 
-# Read the firmware's own reserved partition's type/name now, from the
-# firmware image itself, while it's still intact -- its GPT gets zapped
-# away below along with the OS image's, so this is the last point either
-# input's own partition metadata is still readable. Only the type/name
-# carry any real meaning to preserve (upstream's own convention, e.g.
-# type 8300 name 'uboot'); the reserved region's *boundaries* in the
-# combined disk are entirely our own (RESERVED_START_SECTOR to just
-# before the OS partitions), not copied from the input.
+# Read the firmware's own partition type/name now, before its GPT gets
+# zapped below -- last point it's still readable. Only type/name carry
+# real meaning to preserve (upstream convention, e.g. type 8300
+# 'uboot'); the reserved region's own boundaries are ours, not copied.
 fw_info=$(sgdisk -i 1 "${FIRMWARE_IMG}") || {
     echo "error: firmware image ${FIRMWARE_IMG} doesn't have a partition 1 to read a type/name from" >&2
     exit 1
@@ -139,9 +117,8 @@ fi
 
 OS_SIZE=$(stat -c '%s' "${OS_RAW_IMG}")
 
-# First partition's start sector in the source image -- everything before
-# it (protective MBR + primary GPT header/table) is discarded; we build a
-# fresh GPT for the combined disk instead.
+# First partition's start sector -- everything before it (protective MBR
+# + primary GPT) is discarded; we build a fresh GPT instead.
 OLD_BASE_SECTOR=$(sgdisk -p "${OS_RAW_IMG}" | awk '$1 ~ /^[0-9]+$/ {print $2; exit}')
 if [[ -z "${OLD_BASE_SECTOR}" ]]; then
     echo "error: could not read a partition table from ${OS_RAW_IMG}" >&2
@@ -149,11 +126,9 @@ if [[ -z "${OLD_BASE_SECTOR}" ]]; then
 fi
 OLD_BASE_BYTES=$((OLD_BASE_SECTOR * SECTOR))
 
-# The big dd copy below runs at bs=1M for speed (sector-sized I/O on a
-# multi-GB image is painfully slow). That's only safe if the source
-# partition's start offset is itself a whole number of MiB -- true for
-# any normal 1 MiB/2048-sector-aligned partition table, but check rather
-# than silently mis-copying data if it somehow isn't.
+# The dd copy below runs at bs=1M for speed -- only safe if the source
+# partition's start offset is a whole number of MiB (true for any normal
+# 1 MiB-aligned table), so check rather than silently mis-copy.
 if [[ $((OLD_BASE_BYTES % (1024 * 1024))) -ne 0 ]]; then
     echo "error: source image's first partition (sector ${OLD_BASE_SECTOR}) isn't 1 MiB-aligned, can't safely bs=1M copy it" >&2
     exit 1
@@ -181,13 +156,10 @@ truncate -s "${TOTAL_BYTES}" "${OUTPUT_IMG}"
 #    boot ROM actually looks for it, regardless of anything the GPT says.
 dd if="${FIRMWARE_IMG}" of="${OUTPUT_IMG}" bs=1M conv=notrunc,fsync status=progress
 
-# 2. OS partition data: copied verbatim (never reformatted), just moved to
-#    start ${RESERVED_MIB} MiB into the disk instead of at sector 0. This
-#    necessarily also carries over the OS image's own trailing backup GPT
-#    header/table (it sits at the OS image's own last sector, and this
-#    copy's own math places it at the combined disk's own last sector
-#    too) -- harmless here, since every remaining trace of both inputs'
-#    GPTs (this one included) gets wiped in the next step regardless.
+# 2. OS partition data: copied verbatim, moved to start ${RESERVED_MIB}
+#    MiB into the disk instead of sector 0. This also carries over the OS
+#    image's trailing backup GPT (lands at the combined disk's own last
+#    sector) -- harmless, since it gets wiped in the next step regardless.
 dd if="${OS_RAW_IMG}" of="${OUTPUT_IMG}" bs=1M \
     skip=$((OLD_BASE_BYTES / 1024 / 1024)) \
     seek=$((RESERVED_BYTES / 1024 / 1024)) \
@@ -198,17 +170,12 @@ dd if="${OS_RAW_IMG}" of="${OUTPUT_IMG}" bs=1M \
 #    disk's real, final byte count.
 sgdisk --zap-all "${OUTPUT_IMG}"
 
-# 4. Build the entire combined GPT -- the reserved region plus every OS
-#    partition, preserving each OS partition's size/type/name/PARTUUID
-#    and attribute bits (e.g. bit 59, GUID_FLAG_NO_AUTO/GROWFS-style flags
-#    some tooling sets on the root partition, which bootc-image-builder's
-#    own output may or may not rely on -- not dropping them costs nothing
-#    and avoids silently discarding metadata this script has no way to
-#    know isn't needed) -- as arguments to ONE sgdisk invocation. sgdisk
-#    processes every action against its in-memory copy of the table and
-#    writes to disk exactly once, at the very end, so there is no
-#    intermediate state for the primary and backup copies to ever
-#    disagree about.
+# 4. Build the entire combined GPT -- reserved region plus every OS
+#    partition, preserving size/type/name/PARTUUID and attribute bits
+#    (e.g. bit 59 GUID_FLAG_NO_AUTO/GROWFS-style flags some tooling sets
+#    on root -- costs nothing to keep, so kept rather than guessed at) --
+#    as one sgdisk invocation. sgdisk writes to disk exactly once, at the
+#    end, so primary and backup can never disagree.
 sgdisk_args=(
     "--new=1:${RESERVED_START_SECTOR}:$((NEW_BASE_SECTOR - 1))"
     "--typecode=1:${FW_TYPECODE}"
@@ -251,9 +218,8 @@ for old_num in "${part_numbers[@]}"; do
     new_num=$((new_num + 1))
 done
 
-# This is a UEFI-only image (no BIOS/legacy fallback) -- confirm an EFI
-# System Partition actually made it across rather than assuming the
-# source image had one.
+# UEFI-only image (no BIOS/legacy fallback) -- confirm an EFI System
+# Partition actually made it across rather than assume it.
 if [[ "${found_esp}" != "true" ]]; then
     echo "error: no EFI System Partition (${ESP_GUID}) found among ${OS_RAW_IMG}'s partitions -- this image would not be UEFI-bootable" >&2
     exit 1
