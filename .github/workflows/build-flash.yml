@@ -165,6 +165,11 @@ jobs:
           fi
           echo "Found raw disk image: ${RAW_IMAGE}"
           RAW_DIR=$(dirname "${RAW_IMAGE}")
+          # sudo: bootc-image-builder-action runs rootful, so its whole
+          # output dir comes out root-owned -- without this, zstd's own
+          # -o write below fails with "Permission denied" on this
+          # directory (not the .raw file, which is handled separately).
+          sudo chown "$(id -u):$(id -g)" "${RAW_DIR}"
 
           if [[ "${{ steps.board-config.outputs.has_firmware }}" == "true" ]]; then
             ./scripts/compose-sdcard-image.sh \
