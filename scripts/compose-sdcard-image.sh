@@ -248,6 +248,20 @@ if [[ "${found_esp}" != "true" ]]; then
     exit 1
 fi
 
+# Belt and suspenders: re-run the same primary-authoritative resync from
+# above, once more, now that every sgdisk --new call in the loop above
+# has had its own chance to rebuild the backup header -- confirmed on a
+# real ~8.7 GiB image built by this repo's own CI (ubuntu-24.04-arm's
+# gdisk/sgdisk, an older build than the 1.0.10 this was developed
+# against) that a stray "main GPT header's first usable LBA pointer (34)
+# doesn't match the backup GPT header's first usable LBA pointer (2048)"
+# can still slip back in from one of those calls, even though this exact
+# dd + sgdisk -e + --disk-guid combo right after the OS-data copy above
+# was independently confirmed clean end to end against sgdisk 1.0.10.
+# Rather than chase whichever sgdisk version/call reintroduces it, just
+# resync once more right before the final check, unconditionally.
+sgdisk -e --disk-guid="${COMBINED_GUID}" "${OUTPUT_IMG}"
+
 assert_gpt_ok "${OUTPUT_IMG}"
 sgdisk -p "${OUTPUT_IMG}"
 

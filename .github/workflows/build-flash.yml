@@ -94,7 +94,6 @@ jobs:
           if has_firmware:
               print(f"firmware_url={data['edk2_url']}")
               print(f"firmware_sha256={data['edk2_sha256']}")
-              print(f"firmware_filename={data['edk2_filename']}")
           PY
 
       - name: Prepare environment
@@ -124,13 +123,16 @@ jobs:
 
       # Not every board needs firmware embedded on the disk -- only ones
       # that declare edk2_url (and friends) in their images/boards.toml table.
+      # The local filename is arbitrary (fetch-firmware.sh/compose-sdcard-
+      # image.sh never inspect it) -- hardcoded here instead of another
+      # images/boards.toml field.
       - name: Fetch board firmware
         if: steps.board-config.outputs.has_firmware == 'true'
         run: |
           ./scripts/fetch-firmware.sh \
             "${{ steps.board-config.outputs.firmware_url }}" \
             "${{ steps.board-config.outputs.firmware_sha256 }}" \
-            "${{ steps.board-config.outputs.firmware_filename }}"
+            firmware.img
 
       - name: Compose flashable image
         run: |
@@ -152,7 +154,7 @@ jobs:
 
           if [[ "${{ steps.board-config.outputs.has_firmware }}" == "true" ]]; then
             ./scripts/compose-sdcard-image.sh \
-              "${{ steps.board-config.outputs.firmware_filename }}" \
+              firmware.img \
               "${RAW_IMAGE}" \
               "${OUT_NAME}.raw"
             rm -f "${RAW_IMAGE}"
@@ -213,10 +215,8 @@ jobs:
           # Lowercase the image uri
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
 
-      # Only a real `vX.Y.Z` tag push ever creates a GitHub Release.
-      # workflow_dispatch and other non-tag runs never create one -- see
-      # "Attach disk image to latest release" below, which only ever
-      # attaches to a release that already exists.
+      # Only a real `vX.Y.Z` tag push ever creates a GitHub Release --
+      # workflow_dispatch and other non-tag runs skip every step below.
       - name: Login to GitHub Container Registry
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -323,7 +323,18 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           body_path: changelog.md
-          fail_on_unmatched_files: false
+          # bootc-image-builder-action's output-directory nests artifacts
+          # by type (the raw image lands at <output-directory>/image/
+          # disk.raw, not the directory root), and "Upload disk image and
+          # checksum to Job Artifacts" above uploads that whole tree --
+          # so the .zst/.sha256 this step needs land at
+          # artifacts/image/... after download, not flat under artifacts/.
+          # ** globs regardless of nesting depth; fail_on_unmatched_files
+          # catches it loudly if that ever stops matching, instead of
+          # silently publishing a release with no assets (confirmed: the
+          # non-recursive artifacts/*.zst pattern this replaced did
+          # exactly that).
+          fail_on_unmatched_files: true
           files: |
-            artifacts/*.zst
-            artifacts/*.sha256
+            artifacts/**/*.zst
+            artifacts/**/*.sha256

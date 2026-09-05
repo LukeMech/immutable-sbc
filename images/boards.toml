@@ -35,4 +35,3 @@ disk_config = "disk_config/disk.toml"
 # Build used here: https://github.com/kwankiu/edk2-rk3588
 edk2_url = "https://github.com/kwankiu/edk2-rk3588/releases/download/v1.1/rock-5c_UEFI_Release_v1.1.img"
 edk2_sha256 = "30efc4cc82b0fae837a85492b720a103184cfeea8eb4a56718617e5423fb53e0"
-edk2_filename = "rock-5c_UEFI_Release_v1.1.img"
