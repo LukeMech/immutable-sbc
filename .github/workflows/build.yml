@@ -279,7 +279,6 @@ jobs:
           pattern: published-*
           path: publish-markers
           merge-multiple: true
-          if-no-artifact-found: ignore
 
       - name: Check publish status
         id: check
@@ -353,7 +352,6 @@ jobs:
         with:
           pattern: changelog-*
           path: changelog-artifacts
-          if-no-artifact-found: ignore
 
       # needs.discover.outputs.variants is already the exact list built
       # this run -- no board->variant mapping needed, unlike when this
