@@ -2,15 +2,9 @@
 
 set -ouex pipefail
 
-### Minimal GNOME desktop
-#
-# A small, Wayland-only GNOME session: shell, settings, a file manager,
-# a terminal, a text editor and a browser. No games, no extra bundled
-# GNOME apps (Maps, Weather, Contacts, etc.), no Flatpak/Flathub, no
-# gnome-initial-setup wizard -- a single baked-in account (below) logs
-# straight into GDM instead.
-
 dnf5 install -y \
+    glibc-langpack-en \
+    geoclue2 \
     gdm \
     gnome-shell \
     gnome-control-center \
@@ -21,7 +15,7 @@ dnf5 install -y \
     xdg-user-dirs \
     NetworkManager \
     NetworkManager-wifi \
-    bluez
+    bluez \
 
 systemctl enable gdm.service
 systemctl enable NetworkManager.service
@@ -69,9 +63,11 @@ passwd -l lm
 # fixed up explicitly.
 chmod 0440 /etc/sudoers.d/lm-nopasswd
 
-# Compile system_files/etc/dconf/db/local.d's power settings (never
-# blank/suspend) into the binary db dconf actually reads. dconf would
-# normally recompile this itself on changes to local.d, but that relies
-# on watching the directory at runtime -- this is a read-only deployed
-# system, so it has to be baked in at build time instead.
+# Compile system_files/etc/dconf/db/local.d's overrides -- power
+# settings (never blank/suspend), the GNOME Shell input source (keyboard
+# layout), pinned Shell favorites, and automatic time zone -- into the
+# binary db dconf actually reads. dconf would normally recompile this
+# itself on changes to local.d, but that relies on watching the
+# directory at runtime -- this is a read-only deployed system, so it
+# has to be baked in at build time instead.
 dconf update

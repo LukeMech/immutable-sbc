@@ -1,0 +1,7 @@
+# The Shell dash's pinned apps -- replaces GNOME's own upstream default
+# list entirely (dconf keys aren't additive), so this is the full set,
+# not just Console appended to whatever the default happened to be:
+# Console, Files and Settings are the only real GUI apps this image
+# actually ships (see build_files/01-gnome-minimal.sh).
+[org/gnome/shell]
+favorite-apps=['org.gnome.Console.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Settings.desktop']
