@@ -113,15 +113,16 @@ FW_DIR="${BUILDROOT}${FW_SRC_DIR}"
 install -d "${FW_DIR}"
 cp -a "${FW_SRC_DIR}/." "${FW_DIR}/"
 
-# Remove aic8800-usb-dkms/aic8800-firmware now, having already copied
-# everything needed out of them -- *before* installing our own rpm
-# below, not after. Both packages ship the exact same paths
-# (/usr/lib/modules/.../aic8800-usb, /usr/lib/firmware/aic8800/usb) our
-# new rpm is about to claim; removing the original owner first avoids
-# ever depending on rpm's shared-identical-file tolerance to install
-# alongside it instead.
-dnf5 -y remove aic8800-usb-dkms aic8800-firmware
-
+# Everything needed from aic8800-usb-dkms/aic8800-firmware is already
+# copied into BUILDROOT above, and rpmbuild packages purely from
+# BUILDROOT's contents -- it doesn't care whether the originals are
+# still installed. So build our own rpm first, then remove every
+# COPR/build package in one shot below (including aic8800-usb-dkms/
+# aic8800-firmware, which ship the exact same paths --
+# /usr/lib/modules/.../aic8800-usb, /usr/lib/firmware/aic8800/usb -- our
+# new rpm is about to claim), and only then install it. One remove pass
+# instead of two, while still avoiding ever depending on rpm's
+# shared-identical-file tolerance to install alongside the originals.
 SPEC=$(mktemp --suffix=.spec)
 cat > "${SPEC}" <<EOF
 %global debug_package %{nil}
@@ -160,15 +161,17 @@ if [[ -z "${RPM_PATH}" ]]; then
     exit 1
 fi
 
-dnf5 -y install "${RPM_PATH}"
-
 # dkms's own tracking tree for this module (sources, build logs, the
 # .ko copy we just packaged from) is disposable now that the module and
 # its firmware ship as their own rpm-tracked package.
 rm -rf "/var/lib/dkms/${PACKAGE_NAME}"
 
+# `copr disable` is itself a command from the dnf5-command(copr) plugin,
+# so it has to run before that plugin package is removed below.
 dnf5 -y copr disable ausil/aic8800-dkms
-dnf5 -y remove dkms "kernel-devel-${KVER}" rpm-build 'dnf5-command(copr)'
+dnf5 -y remove aic8800-usb-dkms aic8800-firmware dkms "kernel-devel-${KVER}" rpm-build 'dnf5-command(copr)'
+
+dnf5 -y install "${RPM_PATH}"
 
 # Fail the image build (rather than ship silently without Wi-Fi) if the
 # module or its firmware isn't actually there after the dkms/build

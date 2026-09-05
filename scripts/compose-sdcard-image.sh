@@ -178,6 +178,24 @@ dd if="${OS_RAW_IMG}" of="${OUTPUT_IMG}" bs=1M \
     seek=$((RESERVED_BYTES / 1024 / 1024)) \
     conv=notrunc,fsync status=progress
 
+# The copy above necessarily also carries over OS_RAW_IMG's own trailing
+# backup GPT header/table: it sits at OS_RAW_IMG's own last sector, and
+# this copy's own math (dst range ends exactly at TOTAL_BYTES, the
+# combined disk's real end) places it at the combined disk's own last
+# sector too -- clobbering the backup `sgdisk -e` above just wrote there
+# with OS_RAW_IMG's own, describing a completely different disk.
+# Confirmed with a synthetic repro: `sgdisk --verify` afterward reports
+# the backup's disk GUID as OS_RAW_IMG's own GUID, and a bare `sgdisk -e`
+# re-run here only clears the LBA-pointer problems, not the GUID
+# mismatch -- the backup it finds still looks like a complete,
+# internally-consistent GPT, just for the wrong disk, so `-e` alone
+# treats it as "just relocate/resize this" rather than "rebuild this
+# from the primary". Pin the disk GUID back to the primary's own
+# (unaffected by the copy above -- it lives at the front of the disk)
+# in the same call so both problems get fixed together.
+COMBINED_GUID=$(sgdisk -p "${OUTPUT_IMG}" | awk -F': ' '/^Disk identifier/ {print $2}')
+sgdisk -e --disk-guid="${COMBINED_GUID}" "${OUTPUT_IMG}"
+
 # 3. Re-register the OS partitions in the combined GPT, after the
 #    firmware's reserved partition(s), preserving size/type/name/PARTUUID
 #    -- and attribute bits (e.g. bit 59, GUID_FLAG_NO_AUTO/GROWFS-style

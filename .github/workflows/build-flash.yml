@@ -244,11 +244,21 @@ jobs:
       # above raced in the first place).
       - name: Determine variants
         id: variants
+        env:
+          # Passed via env, not spliced onto the python3 command line --
+          # boards is a JSON array of double-quoted strings (e.g.
+          # ["rock-5c"]), and embedding that directly inside this step's
+          # own double-quoted "${{ ... }}" shell text lets bash's own
+          # quote parsing eat the JSON's inner quotes before python ever
+          # sees it (`"["rock-5c"]"` parses as quoted "[" + unquoted
+          # rock-5c + quoted "]", handing python the invalid `[rock-5c]`).
+          # env vars are set verbatim, with no such shell re-parsing.
+          BOARDS_JSON: ${{ needs.discover.outputs.boards }}
         run: |
           set -euo pipefail
-          variants=$(python3 - "${{ needs.discover.outputs.boards }}" <<'PY'
-          import json, sys, tomllib
-          boards = json.loads(sys.argv[1])
+          variants=$(python3 - <<'PY'
+          import json, os, tomllib
+          boards = json.loads(os.environ["BOARDS_JSON"])
           with open("images/boards.toml", "rb") as f:
               data = tomllib.load(f)
           print(json.dumps(sorted({data[b]["variant"] for b in boards})))
@@ -317,28 +327,3 @@ jobs:
           files: |
             artifacts/*.zst
             artifacts/*.sha256
-
-      # workflow_dispatch / other non-tag runs: attach the disk image to
-      # whatever release already exists, but never create one.
-      - name: Determine latest existing release
-        id: latest-release
-        if: "!(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))"
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          LATEST_TAG=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName 2>/dev/null || true)
-          echo "tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Attach disk image to latest release
-        if: >-
-          !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) &&
-          steps.latest-release.outputs.tag != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mapfile -t FILES < <(find artifacts -type f \( -name '*.zst' -o -name '*.sha256' \))
-          gh release upload "${{ steps.latest-release.outputs.tag }}" "${FILES[@]}" \
-            --repo "${{ github.repository }}" \
-            --clobber

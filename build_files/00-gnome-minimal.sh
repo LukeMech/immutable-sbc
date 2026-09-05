@@ -11,6 +11,7 @@ set -ouex pipefail
 # straight into GDM instead.
 
 dnf5 install -y \
+    --exclude=gnome-tour \
     dconf \
     gdm \
     gnome-shell \
@@ -33,6 +34,16 @@ systemctl enable bluetooth.service
 dnf5 install -y \
     screenfetch \
     btop
+
+# Keep btop's binary/package intact (still runnable from a terminal) but
+# drop it out of the GNOME Shell app grid -- it's a TUI tool, not
+# something meant to be launched as a windowed app.
+BTOP_DESKTOP=$(find /usr/share/applications -maxdepth 1 -iname 'btop*.desktop' -print -quit)
+if [[ -z "${BTOP_DESKTOP}" ]]; then
+    echo "error: btop didn't ship a .desktop file under /usr/share/applications" >&2
+    exit 1
+fi
+echo 'NoDisplay=true' >> "${BTOP_DESKTOP}"
 
 # Baked-in default account -- there's no gnome-initial-setup wizard to
 # create one on first boot. Known, fixed credentials by design (this is

@@ -21,7 +21,14 @@
 
 set -euo pipefail
 
-ROOT_SOURCE=$(findmnt -no SOURCE /var)
+# /var is a bind mount of the deployment's own stateroot var directory
+# (e.g. /sysroot/ostree/deploy/default/var -> /var), not a plain
+# top-level mount -- findmnt reports a bind mount's SOURCE as
+# "device[/subpath]" (confirmed: "/dev/mmcblk1p4[/root/ostree/deploy/
+# default/var]"), and lsblk rejects that whole bracketed string outright
+# ("not a block device"). Strip the bracketed subpath to get back the
+# plain device path lsblk expects.
+ROOT_SOURCE=$(findmnt -no SOURCE /var | sed -E 's/\[.*\]$//')
 ROOT_DISK="/dev/$(lsblk -no PKNAME "${ROOT_SOURCE}")"
 ROOT_PART_NUM=$(lsblk -no PARTN "${ROOT_SOURCE}")
 
