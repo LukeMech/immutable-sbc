@@ -34,7 +34,6 @@ on:
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
   DEFAULT_TAG: "latest"
-  BIB_IMAGE: "quay.io/centos-bootc/bootc-image-builder:latest"
 
 concurrency:
   # Not ${{ github.workflow }} -- GitHub's own docs warn a *called*
@@ -125,23 +124,17 @@ jobs:
 
       - name: Prepare environment
         run: |
-          USER_UID=$(id -u)
-          USER_GID=$(id -g)
           IMAGE_NAME="immutable-sbc-${{ steps.board-config.outputs.variant }}"
           # Lowercase the image uri
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
-          echo "USER_UID=${USER_UID}" >> ${GITHUB_ENV}
-          echo "USER_GID=${USER_GID}" >> ${GITHUB_ENV}
 
       - name: Build disk image
         id: build
         uses: osbuild/bootc-image-builder-action@b43efcb44d76d46d55022b66d3dbb89bdf6e5c9a # main
         with:
-          builder-image: ${{ env.BIB_IMAGE }}
           config-file: ./${{ steps.board-config.outputs.disk_config }}
           image: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
-          chown: ${{ env.USER_UID }}:${{ env.USER_GID }}
           types: raw
           # Root filesystem type is declared in-image, shared by every
           # variant (system_files/usr/lib/bootc/install/00-root-filesystem.toml),
@@ -250,12 +243,12 @@ jobs:
       # No more manually-pushed vX.Y.Z tag to read a name from -- derive
       # one from the Fedora version this image is actually built on
       # (Containerfile's own fedora-bootc FROM line, so it never drifts
-      # out of sync with a hardcoded number), today's date, and a plain
-      # counter that starts at 1 and bumps once per existing same-day tag
-      # -- so more than one release landing on the same calendar date
-      # (e.g. build.yml's push trigger firing more than once today) gets
-      # v44.20260919.1, v44.20260919.2, ... instead of colliding or being
-      # skipped.
+      # out of sync with a hardcoded number) and today's date. The first
+      # release on any given date gets that bare v44.20260919, no
+      # counter at all -- only the *next* one landing on the same
+      # calendar date (e.g. build.yml's push trigger firing more than
+      # once today) gets v44.20260919.1, then .2, and so on, so the
+      # common case (one release a day) stays a plain, uncluttered tag.
       - name: Compute release tag
         id: release-tag
         run: |
@@ -266,11 +259,16 @@ jobs:
             exit 1
           fi
           PREFIX="v${FEDORA_VER}.$(date -u +%Y%m%d)"
-          # 10#: force base-10 so bash arithmetic below can't ever
-          # misparse a counter value as an invalid octal literal.
-          LAST_NUM=$(git tag -l "${PREFIX}.*" | sed -E "s/^${PREFIX}\.//" | sort -n | tail -1)
-          NEXT_NUM=$(( 10#${LAST_NUM:-0} + 1 ))
-          TAG="${PREFIX}.${NEXT_NUM}"
+          if ! git rev-parse -q --verify "refs/tags/${PREFIX}" >/dev/null \
+              && [[ -z "$(git tag -l "${PREFIX}.*")" ]]; then
+            TAG="${PREFIX}"
+          else
+            # 10#: force base-10 so bash arithmetic below can't ever
+            # misparse a counter value as an invalid octal literal.
+            LAST_NUM=$(git tag -l "${PREFIX}.*" | sed -E "s/^${PREFIX}\.//" | sort -n | tail -1)
+            NEXT_NUM=$(( 10#${LAST_NUM:-0} + 1 ))
+            TAG="${PREFIX}.${NEXT_NUM}"
+          fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       # The "build" job (matrixed per board, runs before this one) names
