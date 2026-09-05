@@ -11,18 +11,14 @@ set -ouex pipefail
 # straight into GDM instead.
 
 dnf5 install -y \
-    --exclude=gnome-tour \
-    dconf \
     gdm \
     gnome-shell \
     gnome-control-center \
     gnome-console \
-    gnome-text-editor \
     gnome-shell-extension-appindicator \
     nautilus \
     xdg-desktop-portal-gnome \
     xdg-user-dirs \
-    firefox \
     NetworkManager \
     NetworkManager-wifi \
     bluez
@@ -46,9 +42,11 @@ fi
 echo 'NoDisplay=true' >> "${BTOP_DESKTOP}"
 
 # Baked-in default account -- there's no gnome-initial-setup wizard to
-# create one on first boot. Known, fixed credentials by design (this is
-# a personal SBC image, not a multi-user/shared deployment); change the
-# password after first login if that assumption stops holding.
+# create one on first boot. Personal SBC image, not a multi-user/shared
+# deployment -- GDM autologin (system_files/etc/gdm/custom.conf) and
+# passwordless sudo (system_files/etc/sudoers.d/lm-nopasswd) mean this
+# account never actually needs a password at all, so it's locked instead
+# of given one; nothing left that would prompt for it.
 #
 # The account itself is declared in system_files/usr/lib/sysusers.d/lm.conf
 # and its home directory in system_files/usr/lib/tmpfiles.d/lm-home.conf,
@@ -63,7 +61,13 @@ systemd-sysusers /usr/lib/sysusers.d/lm.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/lm-home.conf
 cp -a /etc/skel/. /var/home/lm/
 chown -R lm:lm /var/home/lm
-echo 'lm:0000' | chpasswd
+passwd -l lm
+
+# sudoers.d requires exactly this permission (not group/other-writable) --
+# git only ever tracks the executable bit, not arbitrary modes, so the
+# file lands here as plain 644 after the system_files copy and has to be
+# fixed up explicitly.
+chmod 0440 /etc/sudoers.d/lm-nopasswd
 
 # Compile system_files/etc/dconf/db/local.d's power settings (never
 # blank/suspend) into the binary db dconf actually reads. dconf would

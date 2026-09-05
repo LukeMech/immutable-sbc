@@ -15,7 +15,7 @@
 # minsize is a floor, not a hard cap -- osbuild still sizes the
 # partition up to fit whatever's actually installed if that's bigger
 # than this. The raw image this produces is meant to be small and
-# flashed onto a much larger microSD/eMMC; build_files/01-growroot.sh's
+# flashed onto a much larger microSD/eMMC; build_files/00-default-config.sh's
 # systemd service grows this partition (and the btrfs filesystem in it)
 # to fill the rest of the physical disk on first boot -- this value is
 # not a long-term capacity limit.

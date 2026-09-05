@@ -1,7 +1,7 @@
 # Every shared OSTree/container image variant this repo builds -- what
 # build.yml matrixes over. A variant bundles whatever software a family
 # of boards needs on top of the generic base
-# (build_files/00-gnome-minimal.sh + the shared root-fs declaration at
+# (build_files/01-gnome-minimal.sh + the shared root-fs declaration at
 # system_files/usr/lib/bootc/install/00-root-filesystem.toml):
 #   - images/<suffix>/build_files/ -- numbered build hooks (00-, 10-,
 #     ... naming controls execution order, same convention as the

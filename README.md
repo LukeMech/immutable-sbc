@@ -30,13 +30,19 @@ See the `[rock5]` table in [`images/variants.toml`](images/variants.toml).
 Built from
 [`ublue-os/image-template`](https://github.com/ublue-os/image-template)'s
 tooling, on top of a minimal, Wayland-only GNOME session: shell, settings,
-a file manager, a terminal, a text editor and a browser. No games, no
-extra bundled GNOME apps, no Flatpak/Flathub, no `gnome-initial-setup`
-wizard -- log straight into GDM as the baked-in `lm` / `0000` account
-instead (fixed credentials by design: this is a personal SBC image, not a
-multi-user/shared deployment). The screen never blanks and the system
-never suspends (set via `dconf`, still changeable in Settings afterward --
-see [`build_files/00-gnome-minimal.sh`](build_files/00-gnome-minimal.sh)).
+a file manager and a terminal. No games, no extra bundled GNOME apps, no
+Flatpak/Flathub, no `gnome-initial-setup` wizard -- GDM autologins
+straight to the desktop as the baked-in `lm` account instead (fixed by
+design: this is a personal SBC image, not a multi-user/shared
+deployment). The account's password is locked, not merely blank --
+nothing ever prompts for one, since GDM autologin and passwordless sudo
+(`system_files/etc/sudoers.d/lm-nopasswd`) don't need it either. Locale
+defaults to `en_US.UTF-8` and the keyboard layout to `us`
+(`system_files/etc/locale.conf`, `vconsole.conf`,
+`X11/xorg.conf.d/00-keyboard.conf`, and GNOME's own input source via
+`dconf`). The screen never blanks and the system never suspends (also
+set via `dconf`, still changeable in Settings afterward -- see
+[`build_files/01-gnome-minimal.sh`](build_files/01-gnome-minimal.sh)).
 
 The onboard AIC8800D80 combo chip needs the
 [`aic8800-usb-dkms`](https://copr.fedorainfracloud.org/coprs/ausil/aic8800-dkms/)
@@ -124,13 +130,14 @@ mainline Linux, so no vendor kernel is used.
 
    (Balena Etcher and Raspberry Pi Imager can also write a `.zst`-
    compressed raw image directly, if you prefer a GUI.)
-3. Boot the ROCK 5C from that card and log into GDM as `lm` / `0000` --
-   there's no first-boot setup wizard to create an account.
+3. Boot the ROCK 5C from that card -- GDM autologins straight to the
+   desktop as the baked-in `lm` account, no first-boot setup wizard and
+   no password to type.
 4. The root filesystem grows to fill the rest of the card/eMMC
    automatically on first boot
    (`immutable-sbc-growroot.service`, see
-   [`build_files/01-growroot.sh`](build_files/01-growroot.sh)) -- the raw
-   image itself is deliberately built small
+   [`build_files/00-default-config.sh`](build_files/00-default-config.sh))
+   -- the raw image itself is deliberately built small
    ([`disk_config/disk.toml`](disk_config/disk.toml)), it isn't meant to
    reflect the actual capacity of the card you're flashing onto.
 
