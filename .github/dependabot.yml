@@ -2,10 +2,11 @@
 #
 # github-actions: keeps every `uses:` commit-SHA pin in .github/workflows
 # up to date.
-# docker: keeps every `FROM ...@sha256:...` digest in Containerfile up
-# to date -- including its unused `chunkah-pin` stage, which exists
-# purely so this covers the chunkah image version too (the Justfile's
-# `rechunk` recipe reads that FROM line back out at runtime).
+# docker: would keep any `FROM ...@sha256:...` digest in Containerfile up
+# to date -- there isn't one right now (fedora-bootc:44 and, in the
+# Justfile's `rechunk` recipe, chunkah:latest are both floating tags on
+# purpose, see their own comments), but this stays configured for
+# whenever a digest pin is reintroduced.
 
 version: 2
 updates:

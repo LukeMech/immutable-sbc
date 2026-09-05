@@ -9,25 +9,19 @@ COPY system_files /system_files
 # config (disk configs, firmware) is only read later, by build-flash.yml.
 COPY images /images
 
-# Never built (nothing depends on it, and it sits before the real final
-# stage below so it can't accidentally become the default build target
-# either) -- exists purely so Dependabot's docker ecosystem has a real
-# `FROM ...@sha256:...` line to bump. The Justfile's `rechunk` recipe
-# reads this line back out at runtime, so this is the only place the
-# chunkah image version needs updating.
-FROM quay.io/coreos/chunkah@sha256:ff8b8b466a942ec6000445d4001fc661e2fc5a952ad9ee29b4de9ab09d1d1708 AS chunkah-pin
-
 # Base Image: Fedora bootc, aarch64. Generic across every variant --
 # any board/variant-specific kernel or driver need belongs in that
 # variant's own build hooks (images/<variant>/build_files/), not here.
 # (Today's only variant, rock5, needs none: see README.md's rock-5c
 # section for why.)
 #
-# Pinned by digest; bumped automatically by Dependabot (docker ecosystem).
-# Digest is the aarch64 child of the "44" manifest list -- podman/buildah
-# resolve by digest regardless of the tag text, so this always pulls the
-# same aarch64 image either way.
-FROM quay.io/fedora/fedora-bootc:44@sha256:bc8170813188572139a6d01a3c03ab6b95c2c07152d4d313be4941c0870d8a6f
+# Floating tag, not a pinned digest -- confirmed quay.io garbage-collects
+# older digests behind fedora-bootc's own tags (a previously-pinned
+# digest 404'd with "manifest unknown" after only a few weeks, breaking
+# every build until re-pinned). Trades reproducibility for never failing
+# on stale upstream digest GC; Fedora's own security updates land in
+# this same tag either way.
+FROM quay.io/fedora/fedora-bootc:44
 
 # Which images/<VARIANT>/ this image builds -- see build.yml, which
 # matrixes over every directory under images/ and passes each one here.

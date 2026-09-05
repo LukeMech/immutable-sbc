@@ -133,11 +133,11 @@ build $variant="rock5" $target_image=(image_name + "-" + variant) $tag=default_t
 
 # Split the image for smaller updates.
 #
-# The chunkah image is pinned by digest in Containerfile's unused
-# `chunkah-pin` stage, not hardcoded here -- that's a real (if
-# never-built) FROM line Dependabot's docker ecosystem can see and bump
-# on its own; this recipe just reads it back out, so there's exactly
-# one place to update chunkah's version.
+# The chunkah image reference is hardcoded below, not pinned by digest --
+# quay.io/coreos/chunkah:latest is a small, deliberately-released utility
+# image (unlike fedora-bootc's own near-daily rebuilds of its "44" tag,
+# see Containerfile's comment on that), so there's no equivalent stale-
+# digest risk to guard against here.
 #
 # Used instead of `rpm-ostree compose build-chunked-oci`: the latter has
 # repeatedly dropped kernel-adjacent rpm content when re-deriving the
@@ -150,11 +150,7 @@ rechunk $target_image=image_name $tag=default_tag:
 
     set -xeuo pipefail
 
-    CHUNKAH_IMAGE=$(awk '/^FROM .*coreos\/chunkah/ {print $2; exit}' Containerfile)
-    if [[ -z "${CHUNKAH_IMAGE}" ]]; then
-        echo "error: couldn't find the chunkah-pin FROM line in Containerfile" >&2
-        exit 1
-    fi
+    CHUNKAH_IMAGE="quay.io/coreos/chunkah:latest"
 
     # You may run into space issues on github runners as we are making a
     # complete copy of the image, which likely has no shared layers, unless your
