@@ -53,6 +53,15 @@ if [[ -z "${SRC_DIR}" ]]; then
     exit 1
 fi
 
+# Upstream's own source delivery (not our tarball step -- confirmed byte-for-byte in
+# the pristine archive) has a handful of CRLF-encoded files, all Bluetooth-related,
+# including one of the patches itself (fix-aic_btusb-use-bluez-by-default.patch) --
+# normalize both sides to LF before patching, or `patch` fails a hunk on Fedora with
+# "different line endings" even though the diff content itself is correct (confirmed
+# in CI; a CRLF-tolerant patch/tar toolchain can silently mask this, which is exactly
+# what let this slip through local testing here once already).
+find "${SRC_DIR}/src/USB/driver_fw/drivers" "${SRC_DIR}/debian/patches" -type f -exec sed -i 's/\r$//' {} +
+
 # Apply the whole quilt series, in order -- see the header comment for why this
 # isn't optional. `patch`, not `quilt`: it's already present (rpm-build's own
 # dependency), and a plain ordered `patch -p1` loop is exactly what quilt would do
