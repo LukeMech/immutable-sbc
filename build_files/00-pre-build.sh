@@ -29,7 +29,10 @@ case "${VARIANT}" in
         # package, covered by the global kernel-devel/gcc/make above already.
         ;;
     rpi)
-        # HailoRT's CMake build (images/rpi/build_files/20-/21-hailort-*.sh).
-        dnf5 -y install cmake gcc-c++ git
+        # HailoRT's build (images/rpi/build_files/20-/21-hailort-*.sh) -- gcc-c++ for
+        # the C++ library itself, git for FetchContent's git-clone of its bundled deps
+        # (protobuf, spdlog, cli11, ...). Not cmake: those hooks vendor their own
+        # pinned build instead of using Fedora's, see their own comments for why.
+        dnf5 -y install gcc-c++ git
         ;;
 esac

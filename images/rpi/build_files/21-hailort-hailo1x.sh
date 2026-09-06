@@ -25,6 +25,17 @@ if [[ -z "${SRC_DIR}" ]]; then
     exit 1
 fi
 
+# Vendored CMake, not Fedora's cmake package -- see 20-hailort-hailo8.sh's header for
+# why (this build is just as version-locked as that one, same risk applies).
+curl -fsSL -o "${TMP}/cmake.tar.gz" "${CMAKE_URL}"
+echo "${CMAKE_SHA256}  ${TMP}/cmake.tar.gz" | sha256sum -c -
+tar -xzf "${TMP}/cmake.tar.gz" -C "${TMP}"
+CMAKE="${TMP}/cmake-${CMAKE_VERSION}-linux-aarch64/bin/cmake"
+if [[ ! -x "${CMAKE}" ]]; then
+    echo "error: cmake archive didn't extract as expected" >&2
+    exit 1
+fi
+
 # Same nested-protobuf-sub-build lib64 bug as 20-hailort-hailo8.sh -- see its comment
 # for the full story (hailo-ai/hailort#34, not yet merged on this branch either).
 sed -i '/-Dprotobuf_BUILD_TESTS:BOOL=OFF/i\                -DCMAKE_INSTALL_LIBDIR=lib' \
@@ -39,7 +50,7 @@ BUILD_DIR="${TMP}/build"
 # FetchContent-bundled deps (cli11) cmake_minimum_requires below 3.5, which modern
 # CMake refuses outright rather than just warning; this is CMake's own documented
 # escape hatch for exactly that.
-cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
+"${CMAKE}" -S "${SRC_DIR}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DCMAKE_INSTALL_LIBDIR=lib \
@@ -47,10 +58,10 @@ cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
-cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
+"${CMAKE}" --build "${BUILD_DIR}" --parallel "$(nproc)"
 
 BUILDROOT=$(mktemp -d)
-DESTDIR="${BUILDROOT}" cmake --install "${BUILD_DIR}"
+DESTDIR="${BUILDROOT}" "${CMAKE}" --install "${BUILD_DIR}"
 
 CLI_PATH="${BUILDROOT}${PREFIX}/bin/hailortcli"
 if [[ ! -f "${CLI_PATH}" ]]; then

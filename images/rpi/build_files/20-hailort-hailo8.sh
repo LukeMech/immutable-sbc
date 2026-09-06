@@ -7,7 +7,15 @@ set -ouex pipefail
 #
 # MIT-licensed (libhailort/hailortcli themselves -- LICENSE-3RD-PARTY.md covers bundled
 # deps), pinned commit matching that driver's v4.24.0 exactly: HailoRT and its driver
-# are version-locked pairs (same release date on both repos, confirmed).
+# are version-locked pairs (same release date on both repos, confirmed) -- this build
+# will never get an upstream fix for a future toolchain incompatibility, since nothing
+# here is ever going to move to a newer commit. Builds with a vendored, pinned CMake
+# (versions.env) rather than Fedora's own package for exactly that reason: a future
+# Fedora cmake bump breaking this permanently-frozen build, with no upstream fix ever
+# coming, is a real risk we've already hit twice (protobuf's nested sub-build assuming
+# lib not lib64; one of the bundled deps' cmake_minimum_required being older than
+# CMake 4.0 now allows) -- both only fixable by us, not by re-pinning to a newer
+# HailoRT commit.
 #
 # Genuinely heavy build, unlike every other hook here: CMake fetches and compiles
 # protobuf v21.12 from source itself (no system package, no sha256 pin possible --
@@ -33,6 +41,21 @@ tar -xzf "${TMP}/hailort.tar.gz" -C "${TMP}"
 SRC_DIR=$(find "${TMP}" -maxdepth 1 -iname 'hailort-*' -type d -print -quit)
 if [[ -z "${SRC_DIR}" ]]; then
     echo "error: hailort archive didn't extract as expected" >&2
+    exit 1
+fi
+
+# Vendored CMake, not Fedora's cmake package -- this build is version-locked forever
+# (see header comment), so a future Fedora cmake bump could break it again with no
+# way to fix it upstream. Pinning the exact build already confirmed to work here means
+# that can't happen. hailort/cmake/execute_cmake.cmake's nested protobuf sub-build
+# invokes cmake via ${CMAKE_COMMAND} (always an absolute path), so it picks this same
+# binary up automatically -- no separate patching needed for that.
+curl -fsSL -o "${TMP}/cmake.tar.gz" "${CMAKE_URL}"
+echo "${CMAKE_SHA256}  ${TMP}/cmake.tar.gz" | sha256sum -c -
+tar -xzf "${TMP}/cmake.tar.gz" -C "${TMP}"
+CMAKE="${TMP}/cmake-${CMAKE_VERSION}-linux-aarch64/bin/cmake"
+if [[ ! -x "${CMAKE}" ]]; then
+    echo "error: cmake archive didn't extract as expected" >&2
     exit 1
 fi
 
@@ -63,7 +86,7 @@ BUILD_DIR="${TMP}/build"
 # exactly that, confirmed in CI. Applies to every add_subdirectory()'d dep in this one
 # configure (cli11 included); protobuf's separate nested sub-build above doesn't need
 # it -- its own minimum is still above 3.5, just old enough to warn.
-cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
+"${CMAKE}" -S "${SRC_DIR}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DCMAKE_INSTALL_LIBDIR=lib \
@@ -71,10 +94,10 @@ cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
-cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
+"${CMAKE}" --build "${BUILD_DIR}" --parallel "$(nproc)"
 
 BUILDROOT=$(mktemp -d)
-DESTDIR="${BUILDROOT}" cmake --install "${BUILD_DIR}"
+DESTDIR="${BUILDROOT}" "${CMAKE}" --install "${BUILD_DIR}"
 
 CLI_PATH="${BUILDROOT}${PREFIX}/bin/hailortcli"
 if [[ ! -f "${CLI_PATH}" ]]; then

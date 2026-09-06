@@ -10,7 +10,7 @@ set -ouex pipefail
 # every hook (shared and variant) has already run. The shared build_files/*.sh loop
 # finishes in full before the variant loop even starts, so a shared "99-"-style hook
 # picked up by that loop's own glob would still run before any variant hook, not after
-# (and those variant hooks are exactly the ones still needing kernel-devel/cmake etc.)
+# (and those variant hooks are exactly the ones still needing kernel-devel/gcc-c++ etc.)
 # -- hence invoking this explicitly instead.
 #
 # `copr remove` (unlike `disable`) cleans up the .repo file and imported GPG key, and
@@ -28,7 +28,7 @@ case "${VARIANT}" in
         # Nothing to remove -- see 00-pre-build.sh's matching case.
         ;;
     rpi)
-        dnf5 -y remove cmake gcc-c++ git
+        dnf5 -y remove gcc-c++ git
         ;;
 esac
 

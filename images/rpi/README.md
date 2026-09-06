@@ -39,7 +39,9 @@ so each installs under its own isolated prefix (`/opt/hailort-4.24.0`, `/opt/hai
 the `hailortcli-hailo8`/`hailortcli-hailo1x` symlinks in `/usr/bin`. By far the heaviest build hooks in this
 repo -- CMake fetches and compiles Google's protobuf from source itself (no system package, and that fetch
 isn't sha256-pinned by us -- it's their build tooling's own git clone, outside our control), on top of
-HailoRT's own sizeable C++ codebase, twice over. This gets the runtime installed and callable, but doesn't
+HailoRT's own sizeable C++ codebase, twice over. Both hooks build with a pinned, vendored CMake
+(`versions.env`) rather than Fedora's own package -- these builds are version-locked forever, so a future
+Fedora cmake release breaking something here would have no upstream fix to re-pin to. This gets the runtime installed and callable, but doesn't
 wire it into `npu-run` -- Hailo has no standard TFLite delegate (there's an open upstream request for one,
 unresolved), so using it means `hailortcli`/`libhailort`'s own API directly, not `npu-run --delegate`.
 
