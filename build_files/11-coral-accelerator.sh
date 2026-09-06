@@ -127,7 +127,15 @@ fi
 # Direct Kbuild target (KERNEL_SOURCE_DIR override beats the Makefile's own `uname -r`
 # default), not DKMS -- same reasoning as the Hailo hooks: one fixed-kernel build here,
 # not a registration for future kernel updates on this throwaway build container.
-make -C "${GASKET_SRC_DIR}/src" "KERNEL_SOURCE_DIR=/usr/lib/modules/${KVER}/build" all
+#
+# cd + plain `make`, not `make -C` -- this Makefile's `all` target passes M="$(PWD)" to
+# the kernel build, and $(PWD) is the *environment* variable make inherited from the
+# invoking shell, not the directory `-C` chdirs into (confirmed: `-C` alone left it
+# pointing at build.sh's own cwd, "/", so the kernel build tried to compile "/" as the
+# module source and failed -- "Makefile: No such file or directory"). A real `cd` fixes
+# the environment PWD before make ever reads the Makefile. The Hailo driver hooks don't
+# need this: their Makefile recomputes PWD itself via `PWD := $(shell pwd)`.
+(cd "${GASKET_SRC_DIR}/src" && make "KERNEL_SOURCE_DIR=/usr/lib/modules/${KVER}/build" all)
 
 GASKET_KO=$(find "${GASKET_SRC_DIR}/src" -iname 'gasket.ko' -print -quit)
 APEX_KO=$(find "${GASKET_SRC_DIR}/src" -iname 'apex.ko' -print -quit)
