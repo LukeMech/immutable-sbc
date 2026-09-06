@@ -100,6 +100,4 @@ for the general shape of this repo -- `Containerfile` + `build_files/` +
   firmware for RK3588 boards
 - [`pftf/RPi4`](https://github.com/pftf/RPi4) -- UEFI firmware for the Raspberry Pi 4B
 - [`worproject/rpi5-uefi`](https://github.com/worproject/rpi5-uefi) -- UEFI firmware for the Raspberry Pi 5
-- [`ausil/aic8800-dkms`](https://copr.fedorainfracloud.org/coprs/ausil/aic8800-dkms/) --
-  Wi-Fi/BT driver COPR
 - [`coreos/chunkah`](https://github.com/coreos/chunkah) -- image rechunking

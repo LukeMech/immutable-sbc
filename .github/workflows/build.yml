@@ -50,7 +50,7 @@ jobs:
         variant: ${{ fromJson(needs.discover.outputs.variants) }}
       fail-fast: false
     # aarch64-only project: the ROCK 5C is arm64, so this always runs on a
-    # native arm64 runner (avoids QEMU emulation for the DKMS build step).
+    # native arm64 runner (avoids QEMU emulation for out-of-tree kernel module builds).
     runs-on: ubuntu-26.04-arm
 
     permissions:

@@ -10,8 +10,8 @@ set -ouex pipefail
 # every hook (shared and variant) has already run. The shared build_files/*.sh loop
 # finishes in full before the variant loop even starts, so a shared "99-"-style hook
 # picked up by that loop's own glob would still run before any variant hook, not after
-# (and those variant hooks are exactly the ones still needing dkms/kernel-devel/cmake
-# etc.) -- hence invoking this explicitly instead.
+# (and those variant hooks are exactly the ones still needing kernel-devel/cmake etc.)
+# -- hence invoking this explicitly instead.
 #
 # `copr remove` (unlike `disable`) cleans up the .repo file and imported GPG key, and
 # must run before the plugin package providing it is removed. Repo id is the standard
@@ -25,9 +25,7 @@ done
 
 case "${VARIANT}" in
     rk3588)
-        # cpio deliberately left alone -- see 00-pre-build.sh's rk3588 case for why
-        # removing it takes bootc down with it.
-        dnf5 -y remove dkms
+        # Nothing to remove -- see 00-pre-build.sh's matching case.
         ;;
     rpi)
         dnf5 -y remove cmake gcc-c++ git

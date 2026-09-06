@@ -24,14 +24,9 @@ dnf5 -y install "kernel-devel-${KVER}" gcc make binutils dnf5-plugins rpm-build
 # Per-config: only what this specific variant's own hooks go on to need.
 case "${VARIANT}" in
     rk3588)
-        # dkms: aic8800-usb-dkms's own build (images/rk3588/build_files/10-aic8800-wifi-bt.sh).
-        # cpio isn't installed/removed here even though that hook also uses it to
-        # rpm2cpio-extract things -- it's a hard dependency of dracut (needed to build
-        # the initramfs), so it's already present, and *removing* it later cascades
-        # through dracut -> ostree -> bootc/rpm-ostree and takes bootc out with it
-        # (confirmed: that's what broke `bootc container lint` in CI). Never manage
-        # its lifecycle -- just use it.
-        dnf5 -y install dkms
+        # Nothing extra -- both this variant's own hooks (10-aic8800-wifi-bt.sh,
+        # 20-mesa-teflon.sh) build straight from a Kbuild tree or install a repo
+        # package, covered by the global kernel-devel/gcc/make above already.
         ;;
     rpi)
         # HailoRT's CMake build (images/rpi/build_files/20-/21-hailort-*.sh).
