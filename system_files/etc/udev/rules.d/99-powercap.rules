@@ -1,0 +1,9 @@
+# Lets Mission Center read CPU power draw without root -- one of the three things its
+# "Enabling Additional Values" first-run dialog otherwise asks you to set up (see
+# build_files/01-gnome-minimal.sh, which handles the other two: nethogs' capabilities and
+# lm_sensors). Same rule path/content as upstream's own setup script
+# (mission-center-devs/gng, platform-linux/bin/missioncenter-magpie-setup-linux).
+#
+# Intel RAPL-specific, so it never actually matches on RK3588(S) -- harmless no-op here,
+# kept for parity with what that script would otherwise install.
+SUBSYSTEM=="powercap", KERNEL=="intel-rapl*", RUN+="/usr/bin/chmod a+r /sys/%p/energy_uj"

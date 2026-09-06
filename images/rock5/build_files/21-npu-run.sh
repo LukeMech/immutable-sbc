@@ -16,9 +16,6 @@ set -ouex pipefail
 # rocket (MobileNetV1/V2, MobileDet) rather than chasing a newer detector
 # architecture -- something like EfficientDet or YOLO uses ops rocket doesn't
 # support yet, which would just silently fall back to CPU and defeat the demo.
-#
-# chafa renders the annotated output image directly in the terminal (over SSH
-# too) so there's no need to scp it off the board just to look at it.
 
 dnf5 -y install python3 python3-pip python3-numpy python3-pillow
 

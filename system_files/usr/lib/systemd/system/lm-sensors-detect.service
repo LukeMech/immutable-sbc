@@ -1,0 +1,10 @@
+[Unit]
+Description=Auto-detect lm_sensors hardware monitoring chips
+
+[Service]
+Type=oneshot
+ExecStart=sensors-detect --auto
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

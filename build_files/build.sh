@@ -5,11 +5,6 @@ set -ouex pipefail
 VARIANT="${1:?usage: $0 <variant>}"
 VARIANT_DIR="/ctx/images/${VARIANT}"
 
-# quay.io/fedora/fedora-bootc doesn't bundle the copr plugin the way ublue-os base
-# images do -- install it once here so any hook below can just `dnf5 copr enable ...`
-# without repeating this itself. Removed again in final housekeeping, below.
-dnf5 -y install 'dnf5-command(copr)'
-
 # Copy system_files/ onto / -- includes the root-filesystem declaration
 # (system_files/usr/lib/bootc/install/00-root-filesystem.toml), shared by every variant.
 cp -avf "/ctx/system_files"/. /
@@ -41,12 +36,16 @@ done
 # run before the plugin package providing it is removed. Repo id is the standard
 # `_copr:<host>:<owner>:<project>.repo` naming, so owner/project comes straight
 # back out of the filename rather than needing each hook to report what it enabled.
+#
+# Has to live here, after both hook loops above, not in its own numbered build_files/
+# hook -- the shared build_files/*.sh loop finishes in full before the variant loop
+# even starts, so a shared "99-" hook still runs before any variant hook, not after.
 shopt -s nullglob
 for repo_file in /etc/yum.repos.d/_copr:*.repo; do
     project=$(basename "${repo_file}" .repo | cut -d: -f3-4 --output-delimiter=/)
     dnf5 -y copr remove "${project}"
 done
-dnf5 -y remove 'dnf5-command(copr)'
+dnf5 -y remove 'dnf5-command(copr)' terra-release terra-gpg-keys
 
 # Final housekeeping
 dnf5 -y clean all

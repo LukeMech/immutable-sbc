@@ -2,8 +2,6 @@
 
 set -ouex pipefail
 
-dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-gpg-keys
-
 dnf5 install -y \
     glibc-langpack-en \
     gdm \
@@ -20,14 +18,32 @@ dnf5 install -y \
     nautilus \
     loupe \
     papers \
-    baobab \
     gnome-logs \
+    \
     mission-center \
-    fastfetch
+    which \
+    nethogs \
+    lm_sensors \
+    libcap \
+    \
+    fastfetch \
 
-systemctl enable gdm.service
-systemctl enable NetworkManager.service
-systemctl enable bluetooth.service
+systemctl enable gdm.service NetworkManager.service bluetooth.service lm-sensors-detect.service
+
+# Mission Center's "Enabling Additional Values" first-run dialog wants three things set up
+# (github.com/mission-center-devs/gng, platform-linux/bin/missioncenter-magpie-setup-linux):
+# nethogs with extra capabilities, a powercap udev rule (system_files/etc/udev/rules.d/
+# 99-powercap.rules), and lm_sensors. sensors-detect itself has to probe the *booted*
+# board's real i2c/hwmon buses, not whatever this image happens to be built on, so that
+# part runs at first real boot instead (system_files/usr/lib/systemd/system/
+# lm-sensors-detect.service) -- nethogs' capabilities are build-host-independent, so that
+# part happens here.
+NETHOGS_PATH=$(command -v nethogs)
+if [[ -z "${NETHOGS_PATH}" ]]; then
+    echo "error: nethogs didn't install a binary onto PATH" >&2
+    exit 1
+fi
+setcap "cap_net_admin,cap_net_raw,cap_dac_read_search,cap_sys_ptrace+pe" "${NETHOGS_PATH}"
 
 # Default account is locked, not passworded: autologin + passwordless sudo cover it.
 # Declared via sysusers.d/tmpfiles.d (not useradd, per bootc guidance); skel set below.

@@ -10,7 +10,7 @@ set -ouex pipefail
 KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
 ARCH=$(uname -m)
 
-# dnf5-command(copr) is installed by build.sh, shared by every hook that needs it.
+# dnf5-command(copr) is installed by 00-default-config.sh, shared by every hook that needs it.
 dnf5 -y copr enable ausil/aic8800-dkms
 
 # aic8800-usb-dkms's %post auto-runs `dkms install` against the build host's kernel

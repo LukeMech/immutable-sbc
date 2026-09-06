@@ -1,10 +1,13 @@
 #!/usr/lib/npu-run/venv/bin/python3
-"""Runs a COCO object-detection model through the RK3588(S) NPU (accel/rocket
-+ mesa-libTeflon) by default. Pass --check to also run the same model on CPU
-and compare, or --benchmark N to measure sustained throughput (FPS) instead of
-a single-shot run -- by default CPU and NPU benchmark concurrently (measuring
-them under mutual contention, closer to a real mixed workload); --isolate
-runs them one after another instead, for a clean per-backend number.
+"""Runs a COCO object-detection model through whatever /dev/accel/accel* NPU is
+present -- the RK3588(S)'s accel/rocket + mesa-libTeflon by default, but --delegate
+takes any TFLite external-delegate .so, and detection at startup reports whatever
+kernel driver/delegate it actually finds rather than assuming rocket/Teflon. Pass
+--check to also run the same model on CPU and compare, or --benchmark N to measure
+sustained throughput (FPS) instead of a single-shot run -- by default CPU and NPU
+benchmark concurrently (measuring them under mutual contention, closer to a real
+mixed workload); --isolate runs them one after another instead, for a clean
+per-backend number.
 
 Default model/labels/image are installed under /usr/share/npu-run by
 images/rock5/build_files/21-npu-run.sh; pass your own via --model, --labels
@@ -12,14 +15,14 @@ and --image to try a different picture or detector.
 """
 
 import argparse
+import glob
 import os
-import shutil
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-ACCEL_DEV = "/dev/accel/accel0"
+ACCEL_GLOB = "/dev/accel/accel*"
 DEMO_DIR = "/usr/share/npu-run"
 DEFAULT_MODEL = os.path.join(DEMO_DIR, "detect.tflite")
 DEFAULT_LABELS = os.path.join(DEMO_DIR, "labelmap.txt")
@@ -33,12 +36,17 @@ SINGLE_SHOT_ITERATIONS = 10
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", default=DEFAULT_IMAGE, help="image to run detection on")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="TFLite detection model")
-    parser.add_argument("--labels", default=DEFAULT_LABELS, help="labelmap.txt matching --model")
-    parser.add_argument("--delegate", default=DEFAULT_DELEGATE, help="Teflon delegate .so")
-    parser.add_argument("--output", default=DEFAULT_OUTPUT_IMAGE, help="where to save the annotated image")
+    parser.add_argument("-i", "--image", default=DEFAULT_IMAGE, help="image to run detection on")
+    parser.add_argument("-m", "--model", default=DEFAULT_MODEL, help="TFLite detection model")
+    parser.add_argument("-l", "--labels", default=DEFAULT_LABELS, help="labelmap.txt matching --model")
     parser.add_argument(
+        "-d", "--delegate", default=DEFAULT_DELEGATE, help="TFLite external delegate .so (Teflon by default)"
+    )
+    parser.add_argument(
+        "-o", "--output", default=DEFAULT_OUTPUT_IMAGE, help="where to save the annotated image"
+    )
+    parser.add_argument(
+        "-t",
         "--threads",
         type=int,
         default=os.cpu_count(),
@@ -46,12 +54,13 @@ def parse_args():
         "the interpreter defaults to a single thread if this isn't set)",
     )
     parser.add_argument(
-        "--score-threshold", type=float, default=0.4, help="minimum confidence to report (0-1)"
+        "-s", "--score-threshold", type=float, default=0.4, help="minimum confidence to report (0-1)"
     )
     parser.add_argument(
-        "--check", action="store_true", help="also run on CPU (no delegate) and compare against NPU"
+        "-c", "--check", action="store_true", help="also run on CPU (no delegate) and compare against NPU"
     )
     parser.add_argument(
+        "-b",
         "--benchmark",
         type=int,
         metavar="N",
@@ -59,6 +68,7 @@ def parse_args():
         "instead of a single-shot run; always compares CPU vs NPU",
     )
     parser.add_argument(
+        "-I",
         "--isolate",
         action="store_true",
         help="with --benchmark, run CPU then NPU one after another instead of "
@@ -67,9 +77,36 @@ def parse_args():
     return parser.parse_args()
 
 
-def check_accel():
-    print("== Rocket NPU detection ==")
-    print(f"{ACCEL_DEV}: {'present' if os.path.exists(ACCEL_DEV) else 'MISSING'}")
+def accel_driver(dev_path):
+    """Kernel driver bound to /dev/accel/accelN, read generically via sysfs
+    rather than assumed -- whatever driver Mesa's accel/pipe subsystem loads
+    for the hardware actually present, not specifically rocket."""
+    name = os.path.basename(dev_path)
+    try:
+        return os.path.basename(os.readlink(f"/sys/class/accel/{name}/device/driver"))
+    except OSError:
+        return None
+
+
+def check_accel(delegate_path):
+    print("== NPU/accel detection ==")
+    devices = sorted(glob.glob(ACCEL_GLOB))
+    if not devices:
+        print(f"{ACCEL_GLOB}: none present")
+    drivers = set()
+    for dev in devices:
+        driver = accel_driver(dev)
+        if driver:
+            drivers.add(driver)
+        print(f"{dev}: present (kernel driver: {driver or 'unknown'})")
+
+    if os.path.exists(delegate_path):
+        owner = subprocess.run(
+            ["rpm", "-qf", delegate_path], capture_output=True, text=True, check=False
+        ).stdout.strip()
+        print(f"delegate: {delegate_path} ({owner or 'not rpm-owned'})")
+    else:
+        print(f"delegate: {delegate_path} MISSING")
 
     result = subprocess.run(["dmesg"], capture_output=True, text=True, check=False)
     if result.returncode != 0:
@@ -77,14 +114,14 @@ def check_accel():
             f"dmesg: couldn't read the kernel log ({result.stderr.strip() or 'permission denied'}) "
             "-- Fedora restricts it to root by default (kernel.dmesg_restrict), rerun with sudo"
         )
-    else:
-        hits = [line for line in result.stdout.splitlines() if "rocket" in line.lower()]
+    elif drivers:
+        hits = [line for line in result.stdout.splitlines() if any(d.lower() in line.lower() for d in drivers)]
         if hits:
-            print("dmesg (rocket):")
+            print(f"dmesg ({', '.join(sorted(drivers))}):")
             for line in hits[-5:]:
                 print(f"  {line}")
         else:
-            print("dmesg: no 'rocket' messages (buffer may have rotated since boot)")
+            print(f"dmesg: no messages from {', '.join(sorted(drivers))} (buffer may have rotated since boot)")
     print()
 
 
@@ -179,33 +216,34 @@ def save_annotated(image, detections, output_path):
 
 
 def run_npu_only(args):
+    npu_label = f"NPU-accelerated inference (via {os.path.basename(args.delegate)})"
     try:
         npu_s, npu_detections, image = detect(args.delegate, args, SINGLE_SHOT_ITERATIONS)
     except Exception as e:
-        print(f"== NPU-accelerated inference (rocket via Teflon) ==\n  FAILED: {e}")
+        print(f"== {npu_label} ==\n  FAILED: {e}")
         sys.exit(1)
-    report("NPU-accelerated inference (rocket via Teflon)", npu_s, npu_detections, args.score_threshold)
+    report(npu_label, npu_s, npu_detections, args.score_threshold)
     save_annotated(image, npu_detections, args.output)
 
 
 def run_check(args):
+    npu_label = f"NPU-accelerated inference (via {os.path.basename(args.delegate)})"
     cpu_s, cpu_detections, _ = detect(None, args, SINGLE_SHOT_ITERATIONS)
     report("CPU-only inference (no delegate)", cpu_s, cpu_detections, args.score_threshold)
 
     try:
         npu_s, npu_detections, image = detect(args.delegate, args, SINGLE_SHOT_ITERATIONS)
     except Exception as e:
-        print(f"== NPU-accelerated inference (rocket via Teflon) ==\n  FAILED: {e}")
+        print(f"== {npu_label} ==\n  FAILED: {e}")
         sys.exit(1)
-    report(
-        "NPU-accelerated inference (rocket via Teflon)", npu_s, npu_detections, args.score_threshold
-    )
+    report(npu_label, npu_s, npu_detections, args.score_threshold)
 
     print(f"Speedup: {cpu_s / npu_s:.1f}x (CPU {cpu_s * 1000:.2f} ms vs NPU {npu_s * 1000:.2f} ms)")
     save_annotated(image, npu_detections, args.output)
 
 
 def run_benchmark(args):
+    npu_label = f"NPU (via {os.path.basename(args.delegate)})"
     mode = "isolated" if args.isolate else "concurrent"
     print(f"== Benchmark: {args.benchmark} inferences per backend ({mode}) ==\n")
 
@@ -214,7 +252,7 @@ def run_benchmark(args):
         try:
             npu_s, _, _ = detect(args.delegate, args, args.benchmark)
         except Exception as e:
-            print(f"NPU (rocket/Teflon): FAILED: {e}")
+            print(f"{npu_label}: FAILED: {e}")
             sys.exit(1)
     else:
         # Both run in real threads (not sequentially) since the actual inference
@@ -227,17 +265,17 @@ def run_benchmark(args):
             try:
                 npu_s = npu_future.result()[0]
             except Exception as e:
-                print(f"NPU (rocket/Teflon): FAILED: {e}")
+                print(f"{npu_label}: FAILED: {e}")
                 sys.exit(1)
 
-    print(f"CPU-only:          {1 / cpu_s:6.1f} FPS ({cpu_s * 1000:.2f} ms/inference)")
-    print(f"NPU (rocket/Teflon): {1 / npu_s:6.1f} FPS ({npu_s * 1000:.2f} ms/inference)")
+    print(f"CPU-only: {1 / cpu_s:6.1f} FPS ({cpu_s * 1000:.2f} ms/inference)")
+    print(f"{npu_label}: {1 / npu_s:6.1f} FPS ({npu_s * 1000:.2f} ms/inference)")
     print(f"\nSpeedup: {cpu_s / npu_s:.1f}x")
 
 
 def main():
     args = parse_args()
-    check_accel()
+    check_accel(args.delegate)
     if args.benchmark:
         run_benchmark(args)
     elif args.check:

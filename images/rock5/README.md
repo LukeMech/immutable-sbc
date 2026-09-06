@@ -22,8 +22,8 @@ the NPU. Exposing the NPU at the kernel/devicetree level is handled upstream ins
 [`build_files/21-npu-run.sh`](build_files/21-npu-run.sh) installs `npu-run`, a CLI that reports whether
 `/dev/accel/accel0` is present and, by default, runs a COCO object detector (SSD MobileNetV1, quantized) on a
 dashcam photo through Teflon's NPU delegate alone -- printing what it found (car, person, bicycle, traffic
-light, ...), the inference time, and saving an annotated copy (previewed inline via `chafa` when it's
-installed, which it is here). `--check` also runs the same model on CPU and prints both for comparison;
+light, ...), the inference time, and saving an annotated copy (open it with Loupe, installed by
+`build_files/01-gnome-minimal.sh`, to view it). `--check` also runs the same model on CPU and prints both for comparison;
 `--benchmark N` instead measures N-iteration throughput (FPS) per backend, running CPU and NPU concurrently
 by default (a mixed-workload number) or one after another with `--isolate` (a clean per-backend number).
 `--image`/`--model`/`--labels`/`--delegate`/`--output` swap in your own files instead of the bundled
