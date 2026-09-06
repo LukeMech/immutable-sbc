@@ -18,8 +18,10 @@ set -ouex pipefail
 KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
 ARCH=$(uname -m)
 
-# dnf5-plugins (providing copr/download) and dkms/kernel-devel/rpm-build/cpio
-# themselves come from 00-pre-build.sh, shared by every hook that needs them.
+# dnf5-plugins (providing copr/download) and dkms/kernel-devel/rpm-build come from
+# 00-pre-build.sh, shared by every hook that needs them. cpio isn't -- it's a base
+# dependency of dracut, always present, and deliberately never installed/removed by
+# us (see 00-pre-build.sh's rk3588 case for why removing it takes bootc down too).
 dnf5 -y copr enable ausil/aic8800-dkms
 
 DL_DIR=$(mktemp -d)
