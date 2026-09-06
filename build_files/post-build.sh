@@ -25,7 +25,9 @@ done
 
 case "${VARIANT}" in
     rk3588)
-        dnf5 -y remove dkms cpio
+        # cpio deliberately left alone -- see 00-pre-build.sh's rk3588 case for why
+        # removing it takes bootc down with it.
+        dnf5 -y remove dkms
         ;;
     rpi)
         dnf5 -y remove cmake gcc-c++ git
