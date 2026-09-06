@@ -12,4 +12,4 @@ disk_config = "disk_config/disk.toml"
 # scripts/compose-sdcard-image.sh). Pinned to a release+sha256 (dd'd onto
 # every shipped image) -- a floating download would be a supply-chain hole.
 edk2_url = "https://github.com/lukemech/edk2-rk3588/releases/download/v7.2/rock-5c_UEFI_Release_v7.2.img"
-edk2_sha256 = "7f33157845aeaab55f655cbcd5ba765f8fea5cc2e1883f50125c260aa8d5d1e5"
+edk2_sha256 = "26839a8bcb4aa08c32eca93ba70b9c2a9a0db35f8960e43c39b16015e8e9c078"
