@@ -56,12 +56,20 @@ BUILD_DIR="${TMP}/build"
 # CMAKE_INSTALL_RPATH + CMAKE_BUILD_WITH_INSTALL_RPATH: without this, hailortcli has no
 # baked-in path to find libhailort.so.4.24.0 -- this isolated prefix is never on the
 # system's default library search path.
+# CMAKE_POLICY_VERSION_MINIMUM: one of the FetchContent-bundled deps (cli11)
+# cmake_minimum_requires a version below 3.5, which modern CMake refuses outright
+# ("Compatibility with CMake < 3.5 has been removed") rather than just warning, unlike
+# the other bundled deps here -- this is CMake's own documented escape hatch for
+# exactly that, confirmed in CI. Applies to every add_subdirectory()'d dep in this one
+# configure (cli11 included); protobuf's separate nested sub-build above doesn't need
+# it -- its own minimum is still above 3.5, just old enough to warn.
 cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DCMAKE_INSTALL_LIBDIR=lib \
     -DCMAKE_INSTALL_RPATH="${PREFIX}/lib" \
-    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
 cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
 

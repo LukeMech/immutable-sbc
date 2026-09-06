@@ -35,12 +35,17 @@ if ! grep -q 'CMAKE_INSTALL_LIBDIR=lib' "${SRC_DIR}/hailort/cmake/external/proto
 fi
 
 BUILD_DIR="${TMP}/build"
+# CMAKE_POLICY_VERSION_MINIMUM: see 20-hailort-hailo8.sh's comment -- one of the
+# FetchContent-bundled deps (cli11) cmake_minimum_requires below 3.5, which modern
+# CMake refuses outright rather than just warning; this is CMake's own documented
+# escape hatch for exactly that.
 cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DCMAKE_INSTALL_LIBDIR=lib \
     -DCMAKE_INSTALL_RPATH="${PREFIX}/lib" \
-    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
 cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
 
