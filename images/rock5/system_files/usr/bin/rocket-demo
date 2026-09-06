@@ -1,0 +1,190 @@
+#!/usr/lib/rocket-demo/venv/bin/python3
+"""Reports whether the RK3588(S) NPU (accel/rocket + mesa-libTeflon) is being
+used, by running a COCO object-detection model once on CPU and once through
+Teflon's external delegate, comparing inference time and printing what each
+run found. Also saves an annotated copy of the image so you can see the
+detected boxes. Pass --benchmark to instead measure sustained throughput
+(FPS) over many iterations rather than a single-shot comparison.
+
+Default model/labels/image are installed under /usr/share/rocket-demo by
+images/rock5/build_files/21-rocket-demo.sh; pass your own via --model,
+--labels and --image to try a different picture or detector.
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+import time
+
+ACCEL_DEV = "/dev/accel/accel0"
+DEMO_DIR = "/usr/share/rocket-demo"
+DEFAULT_MODEL = os.path.join(DEMO_DIR, "detect.tflite")
+DEFAULT_LABELS = os.path.join(DEMO_DIR, "labelmap.txt")
+DEFAULT_IMAGE = os.path.join(DEMO_DIR, "test.jpg")
+DEFAULT_DELEGATE = "/usr/lib64/libteflon.so"
+OUTPUT_IMAGE = "/tmp/rocket-demo-output.jpg"
+SINGLE_SHOT_ITERATIONS = 10
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--image", default=DEFAULT_IMAGE, help="image to run detection on")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="TFLite detection model")
+    parser.add_argument("--labels", default=DEFAULT_LABELS, help="labelmap.txt matching --model")
+    parser.add_argument("--delegate", default=DEFAULT_DELEGATE, help="Teflon delegate .so")
+    parser.add_argument(
+        "--score-threshold", type=float, default=0.4, help="minimum confidence to report (0-1)"
+    )
+    parser.add_argument(
+        "--benchmark",
+        type=int,
+        metavar="N",
+        help="run N inferences per backend in a loop and report throughput (FPS) "
+        "instead of the default single-shot comparison",
+    )
+    return parser.parse_args()
+
+
+def check_accel():
+    print("== Rocket NPU detection ==")
+    print(f"{ACCEL_DEV}: {'present' if os.path.exists(ACCEL_DEV) else 'MISSING'}")
+
+    dmesg = subprocess.run(
+        ["dmesg"], capture_output=True, text=True, check=False
+    ).stdout
+    hits = [line for line in dmesg.splitlines() if "rocket" in line.lower()]
+    if hits:
+        print("dmesg (rocket):")
+        for line in hits[-5:]:
+            print(f"  {line}")
+    else:
+        print("dmesg: no 'rocket' messages (buffer may have rotated since boot)")
+    print()
+
+
+def load_labels(path):
+    with open(path) as f:
+        return [line.strip() for line in f]
+
+
+def run_inference(interpreter, input_details, input_data, iterations):
+    interpreter.set_tensor(input_details["index"], input_data)
+    interpreter.invoke()  # warm-up, excluded from timing
+
+    start = time.time()
+    for _ in range(iterations):
+        interpreter.invoke()
+    return (time.time() - start) / iterations
+
+
+def detect(delegate_path, args, iterations):
+    from ai_edge_litert.interpreter import Interpreter, load_delegate
+    import numpy as np
+    from PIL import Image
+
+    delegates = [load_delegate(delegate_path)] if delegate_path else None
+    interpreter = Interpreter(model_path=args.model, experimental_delegates=delegates)
+    interpreter.allocate_tensors()
+
+    input_details = interpreter.get_input_details()[0]
+    outputs = interpreter.get_output_details()
+    height, width = input_details["shape"][1], input_details["shape"][2]
+
+    image = Image.open(args.image).convert("RGB")
+    resized = image.resize((width, height))
+    input_data = np.expand_dims(np.array(resized), axis=0).astype(input_details["dtype"])
+
+    elapsed_s = run_inference(interpreter, input_details, input_data, iterations)
+
+    # TFLite_Detection_PostProcess's fixed output order: boxes, classes, scores, count.
+    boxes = interpreter.get_tensor(outputs[0]["index"])[0]
+    classes = interpreter.get_tensor(outputs[1]["index"])[0]
+    scores = interpreter.get_tensor(outputs[2]["index"])[0]
+    count = int(interpreter.get_tensor(outputs[3]["index"])[0])
+
+    labels = load_labels(args.labels)
+    detections = []
+    for i in range(count):
+        if scores[i] < args.score_threshold:
+            continue
+        ymin, xmin, ymax, xmax = boxes[i]
+        detections.append(
+            {
+                "label": labels[int(classes[i]) + 1],
+                "score": float(scores[i]),
+                "box": (xmin, ymin, xmax, ymax),  # fractions of image size
+            }
+        )
+    return elapsed_s, detections, image
+
+
+def report(title, elapsed_s, detections, score_threshold):
+    print(f"== {title} ==")
+    if detections:
+        for d in sorted(detections, key=lambda d: -d["score"]):
+            print(f"  {d['score']:.3f}: {d['label']}")
+    else:
+        print(f"  (nothing above {score_threshold:.0%} confidence)")
+    print(f"  time: {elapsed_s * 1000:.2f} ms/inference ({1 / elapsed_s:.1f} FPS)\n")
+
+
+def save_annotated(image, detections):
+    from PIL import ImageDraw
+
+    annotated = image.copy()
+    draw = ImageDraw.Draw(annotated)
+    w, h = annotated.size
+    for d in detections:
+        xmin, ymin, xmax, ymax = d["box"]
+        box = (xmin * w, ymin * h, xmax * w, ymax * h)
+        draw.rectangle(box, outline="red", width=3)
+        draw.text((box[0] + 2, box[1] + 2), f"{d['label']} {d['score']:.2f}", fill="red")
+    annotated.save(OUTPUT_IMAGE)
+    print(f"Annotated image saved to {OUTPUT_IMAGE}")
+
+
+def run_single_shot(args):
+    cpu_s, cpu_detections, _ = detect(None, args, SINGLE_SHOT_ITERATIONS)
+    report("CPU-only inference (no delegate)", cpu_s, cpu_detections, args.score_threshold)
+
+    try:
+        npu_s, npu_detections, image = detect(args.delegate, args, SINGLE_SHOT_ITERATIONS)
+    except Exception as e:
+        print(f"== NPU-accelerated inference (rocket via Teflon) ==\n  FAILED: {e}")
+        sys.exit(1)
+    report(
+        "NPU-accelerated inference (rocket via Teflon)", npu_s, npu_detections, args.score_threshold
+    )
+
+    print(f"Speedup: {cpu_s / npu_s:.1f}x (CPU {cpu_s * 1000:.2f} ms vs NPU {npu_s * 1000:.2f} ms)")
+    save_annotated(image, npu_detections)
+
+
+def run_benchmark(args):
+    print(f"== Benchmark: {args.benchmark} inferences per backend ==\n")
+
+    cpu_s, _, _ = detect(None, args, args.benchmark)
+    print(f"CPU-only:          {1 / cpu_s:6.1f} FPS ({cpu_s * 1000:.2f} ms/inference)")
+
+    try:
+        npu_s, _, _ = detect(args.delegate, args, args.benchmark)
+    except Exception as e:
+        print(f"NPU (rocket/Teflon): FAILED: {e}")
+        sys.exit(1)
+    print(f"NPU (rocket/Teflon): {1 / npu_s:6.1f} FPS ({npu_s * 1000:.2f} ms/inference)")
+
+    print(f"\nSpeedup: {cpu_s / npu_s:.1f}x")
+
+
+def main():
+    args = parse_args()
+    check_accel()
+    if args.benchmark:
+        run_benchmark(args)
+    else:
+        run_single_shot(args)
+
+
+if __name__ == "__main__":
+    main()

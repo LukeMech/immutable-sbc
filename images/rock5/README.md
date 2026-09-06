@@ -16,8 +16,16 @@ after real-hardware testing found two separate ways bare/upstream-owned files we
 
 [`build_files/20-mesa-teflon.sh`](build_files/20-mesa-teflon.sh) installs `mesa-libTeflon`, Mesa's TensorFlow
 Lite delegate for the RK3588(S) NPU (`teflon` frontend, `rocket` Gallium driver) -- the userspace side of using
-the NPU. Exposing the NPU at the kernel/devicetree level is a separate, still-open concern (this board's
-firmware ships an outdated devicetree that predates NPU support).
+the NPU. Exposing the NPU at the kernel/devicetree level is handled upstream instead, by this board's
+[`edk2_url`](../boards.toml) firmware rather than a kernel-side devicetree patch.
+
+[`build_files/21-rocket-demo.sh`](build_files/21-rocket-demo.sh) installs `rocket-demo`, a CLI that reports
+whether `/dev/accel/accel0` is present and runs a COCO object detector (SSD MobileNetV1, quantized) on a
+dashcam photo once on CPU and once through Teflon's delegate -- printing what each run found (car, person,
+bicycle, traffic light, ...), both inference times, and saving an annotated copy to
+`/tmp/rocket-demo-output.jpg`, so you can see the NPU actually being used (or find out why not).
+`--image`/`--model`/`--labels`/`--delegate` swap in your own files instead of the bundled defaults, and
+`--benchmark N` replaces the single-shot comparison with N-iteration throughput (FPS) per backend.
 
 **A container image** on `ghcr.io/lukemech/immutable-sbc-rock5`, rebuilt on every push to `main` plus a
 biweekly schedule (`build.yml`) as a fallback for quiet periods. Once installed, `bootc upgrade` pulls updates
