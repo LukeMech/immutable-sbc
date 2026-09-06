@@ -80,12 +80,20 @@ def parse_args():
 def accel_driver(dev_path):
     """Kernel driver bound to /dev/accel/accelN, read generically via sysfs
     rather than assumed -- whatever driver Mesa's accel/pipe subsystem loads
-    for the hardware actually present, not specifically rocket."""
+    for the hardware actually present, not specifically rocket.
+
+    Reads the device's uevent file's plain "DRIVER=..." line rather than
+    resolving a device/driver symlink -- every bound sysfs device has one,
+    regardless of the exact class/symlink topology accel uses."""
     name = os.path.basename(dev_path)
     try:
-        return os.path.basename(os.readlink(f"/sys/class/accel/{name}/device/driver"))
+        with open(f"/sys/class/accel/{name}/device/uevent") as f:
+            for line in f:
+                if line.startswith("DRIVER="):
+                    return line.strip().split("=", 1)[1]
     except OSError:
-        return None
+        pass
+    return None
 
 
 def check_accel(delegate_path):
