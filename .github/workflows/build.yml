@@ -148,20 +148,17 @@ jobs:
           # Variant in filenames: download-artifact subdirs only on multiple matches.
           # /tmp not checkout: an untracked file broke the clean-tree check (e265edd).
           PKG_CHANGELOG="/tmp/package-changelog-${{ matrix.variant }}.md"
-          PREV_SHA_FILE="/tmp/prev_sha-${{ matrix.variant }}.txt"
 
           PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
 
           # Walk back for a commit with a real latest-<shortsha> tag --
           # cancel-in-progress can leave one never pushed (confirmed).
           PREV_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
-          PREV_SHA=""
           if [[ -n "${PREV_TAG}" ]]; then
             while IFS= read -r CANDIDATE_SHA; do
               CANDIDATE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CANDIDATE_SHA}"
               if podman pull --quiet "${CANDIDATE_REF}" >/dev/null 2>&1; then
                 PREV_IMAGE="${CANDIDATE_REF}"
-                PREV_SHA="${CANDIDATE_SHA}"
                 break
               fi
             done < <(git log --format='%h' "${PREV_TAG}")
@@ -175,16 +172,12 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-          echo -n "${PREV_SHA}" > "${PREV_SHA_FILE}"
-
       - name: Upload changelog artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: steps.check-changes.outcome == 'success'
         with:
           name: changelog-${{ matrix.variant }}
-          path: |
-            /tmp/package-changelog-${{ matrix.variant }}.md
-            /tmp/prev_sha-${{ matrix.variant }}.txt
+          path: /tmp/package-changelog-${{ matrix.variant }}.md
           retention-days: 1
 
       # Rechunk/tag/push/sign matter only for a published image: never on a PR,
@@ -381,7 +374,6 @@ jobs:
           : > changelog.md
           for VARIANT in $(echo "${VARIANTS}" | jq -r '.[]'); do
             PKG_FILE="changelog-artifacts/package-changelog-${VARIANT,,}.md"
-            SHA_FILE="changelog-artifacts/prev_sha-${VARIANT,,}.txt"
 
             if [[ "${MULTI}" == "true" ]]; then
               echo "# ${VARIANT}" >> changelog.md
@@ -395,21 +387,24 @@ jobs:
             else
               echo "## Notes" >> changelog.md
               echo >> changelog.md
-              echo "Changelog artifact missing for this variant -- see commit history." >> changelog.md
+              echo "Changelog artifact missing for this variant -- see commit history below." >> changelog.md
               echo >> changelog.md
             fi
-
-            echo "## Commits" >> changelog.md
-            echo >> changelog.md
-            PREV_SHA=$(cat "${SHA_FILE}" 2>/dev/null || true)
-            if [[ -n "${PREV_SHA}" ]] && git cat-file -e "${PREV_SHA}" 2>/dev/null; then
-              git log --pretty='- %h %s' "${PREV_SHA}..HEAD" >> changelog.md
-            else
-              echo "(previous build's commit unavailable -- showing latest commit only)" >> changelog.md
-              git log --pretty='- %h %s' -1 >> changelog.md
-            fi
-            echo >> changelog.md
           done
+
+          # One shared section, not one per variant -- every variant builds from the
+          # same commit of this same repo, so the commit range since the last release
+          # is identical regardless of which variant you're reading about (unlike the
+          # per-variant package diff above, which genuinely does differ).
+          echo "## Commits" >> changelog.md
+          echo >> changelog.md
+          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
+          if [[ -n "${PREV_TAG}" ]] && git rev-parse -q --verify "refs/tags/${PREV_TAG}" >/dev/null; then
+            git log --pretty='- %h %s' "${PREV_TAG}..HEAD" >> changelog.md
+          else
+            echo "(no previous release tag found -- showing latest commit only)" >> changelog.md
+            git log --pretty='- %h %s' -1 >> changelog.md
+          fi
 
       # Pushed only now, after the changelog above has already diffed
       # against history that doesn't include it yet.
