@@ -15,13 +15,28 @@ set -ouex pipefail
 # (unlike everything else in versions.env). radxa-pkg/aic8800 also ships a real
 # aic_btusb Bluetooth kernel module, built alongside the Wi-Fi ones below.
 #
-# Firmware install path (/usr/lib/firmware/aic8800D80/) confirmed by reading the
-# driver source directly, not copied from upstream's own Debian packaging (which
-# installs elsewhere) or the previous COPR-based path here -- both
-# aic8800_fdrv/aicwf_compat_8800d80.c's aic_fw_path handling and
-# aic_load_fw/aicbluetooth.c's aic_default_fw_path fallback resolve to
-# /lib/firmware/aic8800D80/ for the D80 chip, on this exact pinned source revision.
-# If the pinned commit ever moves, re-check this before assuming it still holds.
+# debian/patches/ (quilt series, applied below) is NOT cosmetic -- it's the actual
+# kernel-compat fixes, actively maintained per-kernel-version back to 6.1 (confirmed:
+# building the raw, unpatched source against Fedora's kernel fails outright --
+# implicit-declaration/incompatible-pointer-type errors in cfg80211 ops that changed
+# signature in recent kernels, both fixed by fix-linux-7.1-build.patch and
+# fix-linux-7.2-build.patch). Applying the whole series (not hand-picking) matches
+# how upstream's own Debian packaging actually builds this, rather than us guessing
+# which of the 28 patches matter.
+#
+# Firmware install path: TWO destinations, not one -- confirmed by reading the
+# (patched) driver source directly, re-verified after applying the series above
+# since fix-usb-firmware-path.patch changes this:
+#   - aic8800_fdrv.ko (Wi-Fi): aicwf_compat_8800d80.c's aic_fw_path is untouched by
+#     any patch, self-referential and empty by default -> resolves to
+#     /lib/firmware/aic8800D80/.
+#   - aic_load_fw.ko (Bluetooth/general firmware loader): aicbluetooth.c's patched
+#     aic_default_fw_path -> /lib/firmware/aic8800_fw/USB/aic8800D80/, matching
+#     upstream's own aic8800-firmware.install destination.
+# aic_btusb.ko's own per-chip firmware path only special-cases "aic8800DC" and
+# "aic8800D80N", not plain "aic8800D80" -- unverified whether that matters for BT on
+# this exact chip without real hardware (this class of bug has bitten this hook
+# before, see the README).
 
 . /ctx/versions.env
 KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
@@ -37,6 +52,20 @@ if [[ -z "${SRC_DIR}" ]]; then
     echo "error: aic8800 archive didn't extract as expected" >&2
     exit 1
 fi
+
+# Apply the whole quilt series, in order -- see the header comment for why this
+# isn't optional. `patch`, not `quilt`: it's already present (rpm-build's own
+# dependency), and a plain ordered `patch -p1` loop is exactly what quilt would do
+# here anyway.
+PATCH_SERIES="${SRC_DIR}/debian/patches/series"
+if [[ ! -f "${PATCH_SERIES}" ]]; then
+    echo "error: aic8800 archive didn't contain debian/patches/series" >&2
+    exit 1
+fi
+while IFS= read -r patch_name; do
+    [[ -z "${patch_name}" || "${patch_name}" == \#* ]] && continue
+    patch -p1 -d "${SRC_DIR}" --no-backup-if-mismatch <"${SRC_DIR}/debian/patches/${patch_name}"
+done <"${PATCH_SERIES}"
 
 USB_DIR="${SRC_DIR}/src/USB/driver_fw"
 
@@ -73,9 +102,13 @@ MODULE_DIR="${BUILDROOT}/usr/lib/modules/${KVER}/extra/aic8800-usb"
 install -d "${MODULE_DIR}"
 install -m 644 "${AIC_LOAD_FW_KO}" "${AIC8800_FDRV_KO}" "${AIC_BTUSB_KO}" "${MODULE_DIR}/"
 
-FW_DIR="${BUILDROOT}/usr/lib/firmware/aic8800D80"
-install -d "${FW_DIR}"
-cp -a "${FW_SRC_DIR}/." "${FW_DIR}/"
+# Two destinations, not one -- see the header comment: aic8800_fdrv.ko (Wi-Fi) and
+# aic_load_fw.ko (Bluetooth) resolve different base paths for the same firmware set.
+FW_DIR_WIFI="${BUILDROOT}/usr/lib/firmware/aic8800D80"
+FW_DIR_BT="${BUILDROOT}/usr/lib/firmware/aic8800_fw/USB/aic8800D80"
+install -d "${FW_DIR_WIFI}" "${FW_DIR_BT}"
+cp -a "${FW_SRC_DIR}/." "${FW_DIR_WIFI}/"
+cp -a "${FW_SRC_DIR}/." "${FW_DIR_BT}/"
 
 # Matches upstream's own Debian packaging (its Makefile's `install:` target does the
 # same) -- unlike aic_load_fw/aic8800_fdrv, which both carry a real
@@ -106,6 +139,7 @@ installed via upstream's own Debian/DKMS packaging.
 %files
 /usr/lib/modules/${KVER}/extra/aic8800-usb
 /usr/lib/firmware/aic8800D80
+/usr/lib/firmware/aic8800_fw
 /usr/lib/modules-load.d/aic_bt.conf
 
 %post
@@ -133,6 +167,8 @@ find "/usr/lib/modules/${KVER}" -iname 'aic8800_fdrv.ko*' -print | grep -q .
 find "/usr/lib/modules/${KVER}" -iname 'aic_btusb.ko*' -print | grep -q .
 grep -q 'aic8800_fdrv' "/usr/lib/modules/${KVER}/modules.dep"
 find "/usr/lib/firmware/aic8800D80" -type f | grep -q .
+find "/usr/lib/firmware/aic8800_fw/USB/aic8800D80" -type f | grep -q .
 [[ -f "/usr/lib/firmware/aic8800D80/fw_patch_table_8800d80_u02.bin" ]]
+[[ -f "/usr/lib/firmware/aic8800_fw/USB/aic8800D80/fw_patch_table_8800d80_u02.bin" ]]
 
 rm -rf "${TMP}" "${BUILDROOT}" "${TOPDIR}"
