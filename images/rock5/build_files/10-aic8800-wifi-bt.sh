@@ -10,10 +10,7 @@ set -ouex pipefail
 KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
 ARCH=$(uname -m)
 
-# quay.io/fedora/fedora-bootc doesn't bundle the copr plugin the way
-# ublue-os base images do -- install it explicitly first.
-dnf5 -y install 'dnf5-command(copr)'
-
+# dnf5-command(copr) is installed by build.sh, shared by every hook that needs it.
 dnf5 -y copr enable ausil/aic8800-dkms
 
 # aic8800-usb-dkms's %post auto-runs `dkms install` against the build host's kernel
@@ -113,10 +110,9 @@ fi
 # and firmware ship as their own rpm-tracked package.
 rm -rf "/var/lib/dkms/${PACKAGE_NAME}"
 
-# `copr remove` (unlike `disable`, cleans up the .repo file + GPG key) is a copr-plugin
-# command, so it must run before that plugin package is removed below.
-dnf5 -y copr remove ausil/aic8800-dkms
-dnf5 -y remove aic8800-usb-dkms aic8800-firmware dkms "kernel-devel-${KVER}" rpm-build 'dnf5-command(copr)'
+# The copr repo itself is removed generically at the end of build.sh, once every
+# hook (not just this one) is done with dnf5-command(copr).
+dnf5 -y remove aic8800-usb-dkms aic8800-firmware dkms "kernel-devel-${KVER}" rpm-build
 
 dnf5 -y install "${RPM_PATH}"
 

@@ -2,39 +2,32 @@
 
 set -ouex pipefail
 
+dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-gpg-keys
+
 dnf5 install -y \
     glibc-langpack-en \
     gdm \
     gnome-shell \
-    gnome-control-center \
-    gnome-console \
     gnome-shell-extension-appindicator \
-    nautilus \
     xdg-desktop-portal-gnome \
     xdg-user-dirs \
     NetworkManager \
     NetworkManager-wifi \
     bluez \
+    \
+    gnome-control-center \
+    gnome-console \
+    nautilus \
+    loupe \
+    papers \
+    baobab \
+    gnome-logs \
+    mission-center \
+    fastfetch
 
 systemctl enable gdm.service
 systemctl enable NetworkManager.service
 systemctl enable bluetooth.service
-
-# fastfetch, not screenfetch: screenfetch is broken on real hardware (garbled
-# CPU/disk fields) and unmaintained; fastfetch resolves both correctly.
-dnf5 install -y \
-    fastfetch \
-    btop \
-    chafa
-
-# Hide btop from the app grid -- it's a TUI tool, still usable from a
-# terminal, just not meant to be launched as a windowed app.
-BTOP_DESKTOP=$(find /usr/share/applications -maxdepth 1 -iname 'btop*.desktop' -print -quit)
-if [[ -z "${BTOP_DESKTOP}" ]]; then
-    echo "error: btop didn't ship a .desktop file under /usr/share/applications" >&2
-    exit 1
-fi
-echo 'NoDisplay=true' >> "${BTOP_DESKTOP}"
 
 # Default account is locked, not passworded: autologin + passwordless sudo cover it.
 # Declared via sysusers.d/tmpfiles.d (not useradd, per bootc guidance); skel set below.

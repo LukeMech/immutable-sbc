@@ -177,12 +177,6 @@ def save_annotated(image, detections, output_path):
         return
     print(f"Annotated image saved to {output_path}")
 
-    chafa = shutil.which("chafa")
-    if chafa:
-        subprocess.run([chafa, output_path], check=False)
-    else:
-        print("(install chafa to preview images like this directly in the terminal)")
-
 
 def run_npu_only(args):
     try:
