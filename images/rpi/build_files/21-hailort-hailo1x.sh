@@ -25,6 +25,15 @@ if [[ -z "${SRC_DIR}" ]]; then
     exit 1
 fi
 
+# Same nested-protobuf-sub-build lib64 bug as 20-hailort-hailo8.sh -- see its comment
+# for the full story (hailo-ai/hailort#34, not yet merged on this branch either).
+sed -i '/-Dprotobuf_BUILD_TESTS:BOOL=OFF/i\                -DCMAKE_INSTALL_LIBDIR=lib' \
+    "${SRC_DIR}/hailort/cmake/external/protobuf.cmake"
+if ! grep -q 'CMAKE_INSTALL_LIBDIR=lib' "${SRC_DIR}/hailort/cmake/external/protobuf.cmake"; then
+    echo "error: protobuf.cmake patch didn't apply -- upstream file layout changed?" >&2
+    exit 1
+fi
+
 BUILD_DIR="${TMP}/build"
 cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \

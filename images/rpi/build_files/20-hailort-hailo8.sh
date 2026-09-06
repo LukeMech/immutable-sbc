@@ -36,6 +36,20 @@ if [[ -z "${SRC_DIR}" ]]; then
     exit 1
 fi
 
+# hailort/cmake/external/protobuf.cmake builds protobuf as its own separate, nested
+# cmake sub-build, then unconditionally `include()`s its cmake config from a hardcoded
+# ".../lib/cmake/protobuf" -- but never passes CMAKE_INSTALL_LIBDIR to that sub-build,
+# so on a lib64 system (Fedora aarch64 included) protobuf installs into lib64 instead
+# and that include() fails outright ("could not find requested file"). Confirmed
+# upstream bug, fix not yet merged (hailo-ai/hailort#34) -- inject the same one-line
+# fix that PR uses ourselves rather than wait on it.
+sed -i '/-Dprotobuf_BUILD_TESTS:BOOL=OFF/i\                -DCMAKE_INSTALL_LIBDIR=lib' \
+    "${SRC_DIR}/hailort/cmake/external/protobuf.cmake"
+if ! grep -q 'CMAKE_INSTALL_LIBDIR=lib' "${SRC_DIR}/hailort/cmake/external/protobuf.cmake"; then
+    echo "error: protobuf.cmake patch didn't apply -- upstream file layout changed?" >&2
+    exit 1
+fi
+
 BUILD_DIR="${TMP}/build"
 # CMAKE_INSTALL_LIBDIR pinned explicitly -- GNUInstallDirs' lib-vs-lib64 guess isn't
 # something we also want to have to guess right when setting RPATH below.
