@@ -82,17 +82,26 @@ def accel_driver(dev_path):
     rather than assumed -- whatever driver Mesa's accel/pipe subsystem loads
     for the hardware actually present, not specifically rocket.
 
-    Reads the device's uevent file's plain "DRIVER=..." line rather than
-    resolving a device/driver symlink -- every bound sysfs device has one,
-    regardless of the exact class/symlink topology accel uses."""
+    Reads the device's uevent file rather than resolving a device/driver
+    symlink -- confirmed on real RK3588(S) hardware that accel0's parent
+    device (/sys/devices/platform/rknn, a lightweight aggregator node --
+    the driver's real work happens against the three separate NPU core
+    platform devices, which never show up in this symlink chain at all)
+    has no DRIVER= line in its uevent at all: nothing is bound to *that*
+    particular device object, so no sysfs path is ever going to hand back a
+    driver name for it. Falls back to MODALIAS (also in uevent, minus its
+    "<bus>:" prefix) instead of just reporting "unknown" -- confirmed
+    present ("platform:rknn") even when DRIVER= isn't."""
     name = os.path.basename(dev_path)
     try:
         with open(f"/sys/class/accel/{name}/device/uevent") as f:
-            for line in f:
-                if line.startswith("DRIVER="):
-                    return line.strip().split("=", 1)[1]
+            lines = dict(line.strip().split("=", 1) for line in f if "=" in line)
     except OSError:
-        pass
+        return None
+    if "DRIVER" in lines:
+        return lines["DRIVER"]
+    if "MODALIAS" in lines:
+        return lines["MODALIAS"].split(":", 1)[-1]
     return None
 
 
