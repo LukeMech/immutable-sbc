@@ -1,20 +1,11 @@
-# customizations.filesystem is rejected outright for "raw" ("blueprint
-# validation failed for image type \"raw\": customizations.filesystem:
-# not supported"). customizations.disk.partitions is the supported way
-# to size raw partitions -- without it, bootc-image-builder defaulted
-# root to ~8.5 GiB of unneeded headroom.
+# customizations.filesystem is rejected for "raw" ("not supported"); disk.partitions
+# sizes raw partitions instead -- without it, root defaulted to ~8.5 GiB of headroom.
 #
-# "btrfs" is a partition *type* here, not fs_type (which only accepts
-# xfs/ext4/vfat/swap) -- it has to match the in-image root filesystem
-# declaration (system_files/usr/lib/bootc/install/00-root-filesystem.toml)
-# via a subvolume instead, per
-# https://osbuild.org/docs/user-guide/partitioning/.
+# "btrfs" is a partition *type* here, not fs_type (only xfs/ext4/vfat/swap) --
+# it matches the in-image root filesystem declaration via a subvolume instead.
 #
-# minsize is a floor, not a cap -- osbuild sizes up to fit whatever's
-# actually installed. This image is meant to be small and flashed onto a
-# much larger microSD/eMMC; build_files/00-default-config.sh's systemd
-# service grows it to fill the disk on first boot, so this isn't a
-# long-term capacity limit.
+# minsize is a floor, not a cap -- osbuild sizes up to fit what's installed.
+# Image is small on purpose; 00-default-config.sh's service grows it to fill the disk.
 [[customizations.disk.partitions]]
 type = "btrfs"
 minsize = "1 GiB"

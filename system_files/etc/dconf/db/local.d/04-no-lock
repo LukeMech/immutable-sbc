@@ -1,10 +1,5 @@
-# lm's password is locked (build_files/01-gnome-minimal.sh) -- there is
-# no password that could ever authenticate a locked session back open,
-# so screen locking has to be disabled outright, not just deferred.
-# idle-delay=0 (00-power) only stops the automatic idle-triggered lock;
-# manual locking (Super+L, the system-menu "Lock" entry) ignores that
-# and still strands you at an unsolvable password prompt (confirmed on
-# real hardware -- recoverable only by power-cycling the board).
+# lm's password is locked, so a locked session can never be unlocked -- must disable
+# locking outright: idle-delay=0 alone doesn't stop manual locking (Super+L, confirmed).
 [org/gnome/desktop/lockdown]
 disable-lock-screen=true
 

@@ -1,13 +1,7 @@
-# Same file gnome-control-center's Users panel writes when picking a
-# language -- seeding it avoids ever needing that (polkit-gated, and lm
-# has no password to authenticate it with anyway).
+# Same file gnome-control-center's Users panel writes when picking a language --
+# seeded to avoid that (polkit-gated, and lm has no password to authenticate with).
 #
-# Lives under /usr/share/factory/, not its real /var path -- bootc/ostree
-# deployments discard whatever's under /var in the built image, so a
-# plain file at system_files/var/... never reaches a real deployment.
-# /usr is persisted, so this is the systemd-tmpfiles-recommended source
-# path for a `C` line
-# (system_files/usr/lib/tmpfiles.d/lm-accountsservice.conf) to copy from
-# on first boot instead.
+# Lives under /usr/share/factory/, not its real /var path -- bootc/ostree discards /var
+# in images; /usr persists, so tmpfiles' `C` line copies this back to /var on first boot.
 [User]
 Language=en_US.UTF-8

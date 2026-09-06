@@ -1,19 +1,7 @@
-# Every shared OSTree/container image variant this repo builds -- what
-# build.yml matrixes over. A variant bundles whatever a family of boards
-# needs on top of the generic base (build_files/01-gnome-minimal.sh + the
-# shared root-fs declaration):
-#   - images/<suffix>/build_files/ -- numbered build hooks (00-, 10-, ...
-#     order, same convention as top-level build_files/)
-#   - images/<suffix>/system_files/ -- optional overlay, copied onto /
-#     the same way the top-level one is (nothing uses this yet)
+# A variant (what build.yml matrixes over) bundles a board family's OS needs:
+# images/<suffix>/{build_files,system_files}/, package "immutable-sbc-<suffix>".
 #
-# Not tied to one physical board -- multiple images/boards.toml entries
-# can share a variant if they need identical OS content but different
-# disk layouts/firmware.
-#
-# Package name is always "immutable-sbc-<suffix>", never hardcoded
-# separately. build.yml's "List variants" step reads this file directly
-# -- adding a variant is just adding a [<name>] table plus its directory.
+# Not tied to one board -- boards.toml entries can share a variant.
 
 [rock5]
 # images/rock5/ is this variant's directory; "immutable-sbc-rock5" is

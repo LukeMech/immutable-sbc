@@ -1,6 +1,5 @@
-// Mirrors sudoers.d/lm-nopasswd, but for polkit-mediated actions (GNOME
-// Settings, GNOME Software, etc.) -- lm's password is locked, so any
-// polkit password prompt would be a dead end otherwise.
+// Mirrors sudoers.d/lm-nopasswd for polkit actions (GNOME Settings, Software, etc.) --
+// lm's password is locked, so a polkit prompt would otherwise be a dead end.
 polkit.addRule(function(action, subject) {
     if (subject.user == "lm") {
         return polkit.Result.YES;

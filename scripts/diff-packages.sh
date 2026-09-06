@@ -1,13 +1,10 @@
 #!/bin/bash
 #
-# Package-changes section of the changelog: an rpm -qa diff between
-# <previous-image-ref> and <new-image-ref>, split into added/removed/
-# updated (each shown only if non-empty), or "No package changes."/
-# "## Initial build" if there's nothing to diff.
+# Changelog's package-changes section: rpm -qa diff between <previous-image-ref> and
+# <new-image-ref>, into added/removed/updated, or "No package changes."/"Initial build".
 #
-# Runs pre-push, in build.yml's build_push job -- also how a
-# schedule-triggered run decides whether it found anything new to
-# publish: grep the output for "No package changes."
+# Runs pre-push in build.yml's build_push job -- a schedule run also greps the output
+# for "No package changes." to decide whether it found anything new to publish.
 #
 # Usage: diff-packages.sh <previous-image-ref> <new-image-ref> <output.md>
 
@@ -39,9 +36,8 @@ fi
 : >"${OUTPUT}"
 
 if [[ "${HAVE_PREV}" -eq 1 ]]; then
-    # name<TAB>previous<TAB>new for every package ('-' if a side lacks it),
-    # routed into one of three buckets -- so a release with only updates
-    # doesn't show two empty "Added"/"Removed" headers.
+    # name<TAB>previous<TAB>new ('-' if a side lacks it), routed into one of three
+    # buckets -- so a release with only updates doesn't show empty headers.
     while IFS=$'\t' read -r name prev new; do
         if [[ "${prev}" == "${new}" ]]; then
             continue

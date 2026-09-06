@@ -20,10 +20,8 @@ systemctl enable gdm.service
 systemctl enable NetworkManager.service
 systemctl enable bluetooth.service
 
-# fastfetch, not screenfetch -- confirmed on real hardware that
-# screenfetch is broken here (garbled CPU/disk fields, its own grep
-# errors), unmaintained upstream. fastfetch correctly resolves the
-# aarch64 CPU name and this composefs-root disk layout.
+# fastfetch, not screenfetch: screenfetch is broken on real hardware (garbled
+# CPU/disk fields) and unmaintained; fastfetch resolves both correctly.
 dnf5 install -y \
     fastfetch \
     btop
@@ -37,16 +35,8 @@ if [[ -z "${BTOP_DESKTOP}" ]]; then
 fi
 echo 'NoDisplay=true' >> "${BTOP_DESKTOP}"
 
-# Baked-in default account -- no gnome-initial-setup wizard, no
-# multi-user setup. Locked instead of given a password: GDM autologin
-# (system_files/etc/gdm/custom.conf) + passwordless sudo
-# (system_files/etc/sudoers.d/lm-nopasswd) mean nothing ever needs one.
-#
-# Declared via sysusers.d/tmpfiles.d (system_files/usr/lib/...), not
-# `useradd`, per bootc's own guidance (systemd-sysusers reconciles
-# /etc/passwd every boot). Applied now too so the account/home dir exist
-# in this build already; neither sets a password or populates skel, so
-# that's still explicit here.
+# Default account is locked, not passworded: autologin + passwordless sudo cover it.
+# Declared via sysusers.d/tmpfiles.d (not useradd, per bootc guidance); skel set below.
 systemd-sysusers /usr/lib/sysusers.d/lm.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/lm-home.conf
 cp -a /etc/skel/. /var/home/lm/
@@ -57,7 +47,6 @@ passwd -l lm
 # lands here as plain 644 and needs fixing up.
 chmod 0440 /etc/sudoers.d/lm-nopasswd
 
-# Compile system_files/etc/dconf/db/local.d into the binary db dconf
-# reads -- normally self-recompiling, but that relies on watching the
-# directory at runtime, which a read-only deployed system can't do.
+# Compile dconf db from system_files/etc/dconf/db/local.d -- normally self-recompiling
+# by watching the directory at runtime, which a read-only system can't do.
 dconf update

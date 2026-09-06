@@ -5,22 +5,17 @@ set -ouex pipefail
 VARIANT="${1:?usage: $0 <variant>}"
 VARIANT_DIR="/ctx/images/${VARIANT}"
 
-# Copy the contents of system_files/ of the git repo to / -- this
-# includes the root-filesystem declaration
-# (system_files/usr/lib/bootc/install/00-root-filesystem.toml), shared by
-# every variant, not just this one.
+# Copy system_files/ onto / -- includes the root-filesystem declaration
+# (system_files/usr/lib/bootc/install/00-root-filesystem.toml), shared by every variant.
 cp -avf "/ctx/system_files"/. /
 
-# A variant can also ship its own system_files/ overlay for anything that
-# genuinely varies per variant (not the case for anything today) -- same
-# cp-a-tree-onto-/ convention as the generic one above, just scoped to
-# this one variant.
+# A variant can also ship its own system_files/ overlay for per-variant
+# differences (none exist today) -- same cp-a-tree convention, scoped to it.
 if [[ -d "${VARIANT_DIR}/system_files" ]]; then
     cp -avf "${VARIANT_DIR}/system_files"/. /
 fi
 
-# Shared build hooks, common to every variant, run in order.
-# Numbered-prefix naming (00-, 10-, ...) controls execution order --
+# Shared build hooks, run in numbered order (00-, 10-, ...) --
 # add new hooks to build_files/ without touching this script.
 for hook in /ctx/*.sh; do
     [[ -e "${hook}" ]] || continue
@@ -28,9 +23,8 @@ for hook in /ctx/*.sh; do
     bash "${hook}"
 done
 
-# This variant's own build hooks, run in order, same convention as the
-# shared ones above -- add new hooks to images/<variant>/build_files/
-# without touching this script.
+# This variant's own build hooks, same numbered-order convention as above --
+# add new hooks to images/<variant>/build_files/ without touching this script.
 for hook in "${VARIANT_DIR}/build_files"/*.sh; do
     [[ -e "${hook}" ]] || continue
     bash "${hook}"

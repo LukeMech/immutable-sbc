@@ -2,21 +2,15 @@
 FROM scratch AS ctx
 COPY build_files /
 COPY system_files /system_files
-# images/, not just images/<variant>/: bind-mounted into the build below
-# and never persisted into the final image either way, so including
-# boards.toml too costs nothing even though only variant-level files are
-# used here -- board config is read later, by build-flash.yml.
+# Whole images/ tree (not just the variant dir), bind-mounted and never persisted --
+# copying boards.toml too costs nothing; it's read later, by build-flash.yml.
 COPY images /images
 
-# Base Image: Fedora bootc, aarch64. Generic across every variant --
-# variant-specific kernel/driver needs belong in that variant's own
-# build hooks (images/<variant>/build_files/), not here.
+# Fedora bootc aarch64, generic across variants (driver/kernel needs go in
+# that variant's own images/<variant>/build_files/).
 #
-# Floating tag, not a pinned digest -- confirmed quay.io garbage-collects
-# older digests behind fedora-bootc's tags (a previously-pinned digest
-# 404'd with "manifest unknown" after a few weeks, breaking every build
-# until re-pinned). Trades reproducibility for never failing on stale
-# upstream digest GC; security updates land in this same tag either way.
+# Floating tag: a pinned digest 404'd after quay.io GC'd it,
+# breaking builds until re-pinned.
 FROM quay.io/fedora/fedora-bootc:44
 
 # Which images/<VARIANT>/ this image builds -- see build.yml, which
@@ -24,8 +18,7 @@ FROM quay.io/fedora/fedora-bootc:44
 ARG VARIANT=rock5
 
 ### MODIFICATIONS
-## make modifications desired in your image and install packages by modifying the build.sh script
-## the following RUN directive does all the things required to run "build.sh" as recommended.
+## Modify the image or install packages by editing build.sh, run below as recommended.
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \

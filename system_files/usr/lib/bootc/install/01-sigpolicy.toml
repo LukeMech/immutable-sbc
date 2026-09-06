@@ -1,13 +1,8 @@
-# Makes every install path (bootc-image-builder, `bootc install`,
-# `bootc switch`) record the deployment's origin as ostree-image-signed
-# instead of ostree-unverified-registry, so policy.json's sigstoreSigned
-# rule for ghcr.io/lukemech is actually consulted on future `bootc
-# upgrade` / `rpm-ostree update`, not silently skipped.
+# Makes every install path record the origin as ostree-image-signed, not
+# ostree-unverified-registry, so sigstoreSigned is consulted on upgrade, not skipped.
 #
-# Requires policy.json's top-level "default" to be anything other than
-# insecureAcceptAnything -- bootc refuses to honor this flag otherwise
-# ("specifies a default of insecureAcceptAnything; refusing usage"),
-# which is why that default is "reject" with per-registry overrides.
+# Requires policy.json's top-level "default" to not be insecureAcceptAnything -- bootc
+# refuses to honor this flag otherwise ("refusing usage"), hence "reject" with overrides.
 #
 # https://bootc.dev/bootc/man/bootc-install-config.5.html
 [install]

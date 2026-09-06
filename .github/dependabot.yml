@@ -1,8 +1,7 @@
 # https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
 #
-# github-actions: keeps every `uses:` commit-SHA pin up to date.
-# docker: no digest pin exists yet (Containerfile/Justfile use floating
-# tags on purpose) -- kept configured for whenever one is added.
+# github-actions keeps `uses:` SHA pins current. docker has no digest pin yet
+# (floating tags intentional) but stays configured for when one's added.
 
 version: 2
 updates:

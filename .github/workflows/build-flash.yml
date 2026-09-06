@@ -1,9 +1,7 @@
 name: Build flash image
 
-# Called via build.yml's `uses:` (tag passed in from release-meta), or run
-# directly from the Actions UI (no tag yet, publish defaults false). Not
-# github.event_name == 'workflow_call' -- confirmed a called workflow sees
-# its caller's original event there, never 'workflow_call' itself.
+# Called via build.yml's `uses:` (tag from release-meta), or run directly from
+# the Actions UI (no tag). event_name here is the caller's, never 'workflow_call'.
 on:
   workflow_dispatch:
     inputs:
@@ -70,9 +68,8 @@ jobs:
       matrix:
         board: ${{ fromJson(needs.discover.outputs.boards) }}
       fail-fast: false
-    # aarch64-only project: always a native arm64 runner. Pinned to 24.04
-    # (not 26.04): ubuntu-os/image-template#269 tracks the same "mount:
-    # permission denied" osbuild failure on ubuntu-26.04(-arm) runners.
+    # aarch64-only: always a native arm64 runner. Pinned to 24.04, not 26.04 --
+    # image-template#269 tracks a "mount: permission denied" osbuild failure there.
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -87,9 +84,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # Reads this board's [<board>] table from images/boards.toml so
-      # nothing here hardcodes variant/disk config/firmware -- add a
-      # board there, not by editing this workflow.
+      # Reads this board's [<board>] table from images/boards.toml so nothing here
+      # hardcodes variant/disk/firmware -- add a board there, not in this workflow.
       - name: Load board config
         id: board-config
         run: |
@@ -122,14 +118,12 @@ jobs:
           config-file: ./${{ steps.board-config.outputs.disk_config }}
           image: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
           types: raw
-          # Root filesystem type is declared in-image (system_files/usr/lib/
-          # bootc/install/00-root-filesystem.toml), not here -- no --rootfs
-          # flag needed.
+          # Root filesystem type is declared in-image (00-root-filesystem.toml),
+          # not here -- no --rootfs flag needed.
           additional-args: --use-librepo=True
 
-      # Only boards declaring edk2_url in images/boards.toml need firmware.
-      # Local filename is arbitrary (never inspected downstream) --
-      # hardcoded here instead of another images/boards.toml field.
+      # Only boards declaring edk2_url need firmware. Local filename is arbitrary
+      # (never inspected downstream) -- hardcoded rather than a boards.toml field.
       - name: Fetch board firmware
         if: steps.board-config.outputs.has_firmware == 'true'
         run: |
@@ -144,9 +138,8 @@ jobs:
           OUTPUT_DIR="${{ steps.build.outputs.output-directory }}"
           OUT_NAME="immutable-sbc-${{ matrix.board }}"
 
-          # Locate the raw disk wherever bootc-image-builder put it, rather
-          # than assuming a fixed subpath -- its output layout has changed
-          # between versions.
+          # Locate the raw disk wherever bootc-image-builder put it, rather than assume
+          # a fixed subpath -- its output layout has changed between versions.
           RAW_IMAGE=$(find "${OUTPUT_DIR}" -iname '*.raw' -print -quit)
           if [[ -z "${RAW_IMAGE}" ]]; then
               echo "error: no .raw file found under ${OUTPUT_DIR}" >&2
@@ -155,10 +148,8 @@ jobs:
           fi
           echo "Found raw disk image: ${RAW_IMAGE}"
           RAW_DIR=$(dirname "${RAW_IMAGE}")
-          # sudo: bootc-image-builder-action runs rootful, so the output
-          # dir comes out root-owned -- without this, zstd's -o write
-          # below fails with "Permission denied" (not the .raw file,
-          # which is handled separately).
+          # sudo: bootc-image-builder-action runs rootful, so the output dir comes out
+          # root-owned -- without this, zstd's -o write below fails "Permission denied".
           sudo chown "$(id -u):$(id -g)" "${RAW_DIR}"
 
           if [[ "${{ steps.board-config.outputs.has_firmware }}" == "true" ]]; then
@@ -206,9 +197,8 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # "build" names artifacts before inputs.tag is known, so the version
-      # is spliced in here -- the .sha256 file's contents are rewritten
-      # too, since it embeds the filename `sha256sum -c` checks against.
+      # "build" names artifacts before inputs.tag is known, so the version is spliced
+      # in here -- the .sha256 file's embedded filename is rewritten too, to match.
       - name: Add version to release asset filenames
         env:
           TAG: ${{ inputs.tag }}
@@ -239,10 +229,8 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ inputs.tag }}
-          # ** because bootc-image-builder-action nests output by type;
-          # fail_on_unmatched_files catches it loudly if the glob stops
-          # matching (confirmed: a non-recursive glob here silently
-          # published with no assets).
+          # ** because output is nested by type; fail_on_unmatched_files catches a glob
+          # that stops matching (confirmed: a flat glob silently published nothing).
           fail_on_unmatched_files: true
           files: |
             artifacts/**/*.zst

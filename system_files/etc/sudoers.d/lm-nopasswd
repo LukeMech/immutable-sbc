@@ -1,6 +1,3 @@
-# The default account's password is locked (see build_files/01-gnome-
-# minimal.sh) -- there's nothing it could type here even if prompted, so
-# sudo has to not prompt at all. Mode fixed up to the 0440 sudoers.d
-# requires in that same script (git only tracks the executable bit, not
-# arbitrary permissions).
+# Password is locked (01-gnome-minimal.sh) -- nothing to type if prompted, so sudo
+# must not prompt; that script also fixes this file's mode to the required 0440.
 lm ALL=(ALL) NOPASSWD: ALL

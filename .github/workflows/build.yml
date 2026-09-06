@@ -1,7 +1,6 @@
 name: Build container image
-# Every successful non-PR run here chains into release-meta (publishes
-# the release) then build-flash.yml (uses:, not a separate trigger --
-# that file never triggers on this one).
+# Every non-PR run chains into release-meta (publishes) then build-flash.yml
+# (via uses:, not a separate trigger).
 on:
   pull_request:
     branches:
@@ -32,9 +31,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # Every top-level table in images/variants.toml IS a variant -- no
-      # separate list to keep in sync. Adding a variant is just adding
-      # a table there (plus its images/<suffix>/ directory).
+      # Every top-level table in images/variants.toml IS a variant, no list to sync.
+      # Adding one is just adding a table (plus its images/<suffix>/ dir).
       - name: List variants
         id: list
         run: |
@@ -65,10 +63,8 @@ jobs:
       id-token: write
 
     steps:
-      # These action versions are pinned by commit SHA and kept current by
-      # Dependabot (.github/dependabot.yml, github-actions ecosystem).
-      # fetch-depth: 0 + fetch-tags -- Check package changes below needs
-      # full history to find the last release's commit.
+      # Actions pinned by SHA, kept current by Dependabot (.github/dependabot.yml).
+      # fetch-depth: 0 + fetch-tags: needed to find the last release's commit below.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -83,9 +79,8 @@ jobs:
         run: |
           just check
 
-      # Package name is always "immutable-sbc-<variant>" -- never derived
-      # from image-template.env here, since that only ever holds a
-      # single-variant default for a human running `just build` locally.
+      # Package name is always "immutable-sbc-<variant>" -- image-template.env only holds
+      # a single-variant default for a human running `just build` locally.
       - name: Image Name
         run: |
           echo "IMAGE_NAME=immutable-sbc-${{ matrix.variant }}" >> $GITHUB_ENV
@@ -112,9 +107,8 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
-      # Needed before the package-delta check below can pull images to
-      # diff -- also gates everything past this point (never on a PR or
-      # off the default branch).
+      # Needed for the package-delta check below to pull images -- also gates everything
+      # past this point (never on a PR or off the default branch).
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -123,9 +117,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Diffs against the last release's commit (not :latest, which can
-      # drift ahead of it) to build the changelog and, on a schedule run
-      # only, decide whether there's anything new to publish.
+      # Diffs against the last release's commit (not :latest, which can drift ahead) to
+      # build the changelog and decide if a schedule run has anything new to publish.
       - name: Check package changes
         id: check-changes
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -133,18 +126,15 @@ jobs:
           set -euo pipefail
           NEW_IMAGE="${IMAGE_NAME}:${DEFAULT_TAG}"
 
-          # Variant baked into the filenames, not just the artifact name --
-          # download-artifact only subdirectories a `pattern` match when
-          # there's more than one (confirmed empty otherwise with today's
-          # single variant).
-          PKG_CHANGELOG="package-changelog-${{ matrix.variant }}.md"
-          PREV_SHA_FILE="prev_sha-${{ matrix.variant }}.txt"
+          # Variant in filenames: download-artifact subdirs only on multiple matches.
+          # /tmp not checkout: an untracked file broke the clean-tree check (e265edd).
+          PKG_CHANGELOG="/tmp/package-changelog-${{ matrix.variant }}.md"
+          PREV_SHA_FILE="/tmp/prev_sha-${{ matrix.variant }}.txt"
 
           PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
 
-          # Walk back from the release tag for a commit with a real
-          # latest-<shortsha> tag -- cancel-in-progress can leave one
-          # never pushed (confirmed happens).
+          # Walk back for a commit with a real latest-<shortsha> tag --
+          # cancel-in-progress can leave one never pushed (confirmed).
           PREV_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
           PREV_SHA=""
           if [[ -n "${PREV_TAG}" ]]; then
@@ -174,13 +164,12 @@ jobs:
         with:
           name: changelog-${{ matrix.variant }}
           path: |
-            package-changelog-${{ matrix.variant }}.md
-            prev_sha-${{ matrix.variant }}.txt
+            /tmp/package-changelog-${{ matrix.variant }}.md
+            /tmp/prev_sha-${{ matrix.variant }}.txt
           retention-days: 1
 
-      # Rechunk/tag/push/sign only matter for an image that's actually
-      # published: never on a PR, never on a schedule run with no package
-      # changes (the biweekly cron exists only to catch upstream updates).
+      # Rechunk/tag/push/sign matter only for a published image: never on a PR,
+      # never a no-change schedule run (cron exists only to catch upstream updates).
       #
       # Optional, smaller delta updates -- chunkah instead of
       # `rpm-ostree compose build-chunked-oci`.
@@ -261,14 +250,12 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
           DIGEST: ${{ steps.push-image.outputs.digest }}
         run: |
-          # https://github.com/containers/container-libs/issues/388
-          # https://github.com/coreos/rpm-ostree/issues/5509
-          # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
+          # Old bundle format so we can run cosign 3.X.X, not 2.X.X
+          # (container-libs#388, rpm-ostree#5509).
           cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
 
-  # Aggregates build_push's per-variant "published" signal -- a matrix
-  # job's own outputs only reliably expose the last shard's value, so
-  # this checks marker artifacts instead.
+  # Aggregates build_push's per-variant "published" signal -- a matrix job's own
+  # outputs only reliably expose the last shard's value, so this checks markers.
   aggregate:
     name: Check publish status
     needs: [discover, build_push]
@@ -293,9 +280,8 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Publishes the release (tag + changelog) before build-flash.yml starts
-  # building any disk image -- the release is about the container image,
-  # not the slower flash images. Tag output feeds build-flash below.
+  # Publishes the release (tag + changelog) before build-flash.yml builds any disk
+  # image -- the release is about the container image. Tag output feeds build-flash.
   #
   # Skipped when nothing published this run (aggregate above) -- build-flash
   # then skips too, since a job's needs must succeed, not just not-fail.
@@ -310,18 +296,16 @@ jobs:
       tag: ${{ steps.release-tag.outputs.tag }}
 
     steps:
-      # fetch-depth: 0 + fetch-tags -- the release-tag/commit-range steps
-      # below need full history and every v-tag to find the previous
-      # release.
+      # fetch-depth: 0 + fetch-tags -- release-tag/commit-range steps below need
+      # full history and every v-tag to find the previous release.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
-      # Tag = Fedora version (Containerfile's own FROM line) + today's
-      # date. First release of the day gets the bare tag; a second one
-      # the same day gets .1, then .2, and so on.
+      # Tag = Fedora version (Containerfile's FROM line) + today's date.
+      # A same-day repeat release gets .1, then .2, and so on.
       - name: Compute release tag
         id: release-tag
         run: |
@@ -344,10 +328,8 @@ jobs:
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-      # Each variant's package-diff + prev-build sha, computed pre-push in
-      # build_push -- release-meta never pulls an image itself.
-      # merge-multiple: true -- flat layout regardless of match count (see
-      # build_push's same note); filenames already carry the variant.
+      # Each variant's diff + prev-build sha, computed pre-push in build_push --
+      # release-meta never pulls an image itself. Filenames carry the variant.
       - name: Download changelog artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -355,9 +337,8 @@ jobs:
           path: changelog-artifacts
           merge-multiple: true
 
-      # needs.discover.outputs.variants is already the exact list built
-      # this run -- no board->variant mapping needed, unlike when this
-      # logic lived in build-flash.yml.
+      # needs.discover.outputs.variants is already this run's exact list -- no
+      # board->variant mapping needed, unlike when this lived in build-flash.yml.
       - name: Generate changelog
         env:
           VARIANTS: ${{ needs.discover.outputs.variants }}
@@ -403,18 +384,16 @@ jobs:
       - name: Create release tag
         run: |
           set -euo pipefail
-          # Annotated tag needs a tagger identity; a fresh checkout never
-          # configures one (confirmed: failed with "Committer identity
-          # unknown" without this).
+          # Annotated tag needs a tagger identity; a fresh checkout never sets one
+          # (confirmed: failed with "Committer identity unknown" without this).
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           TAG="${{ steps.release-tag.outputs.tag }}"
           git tag -a "${TAG}" -m "${TAG}"
           git push origin "${TAG}"
 
-      # No files: here on purpose -- build-flash.yml's attach-assets job
-      # uploads disk images into this same release afterward (get-or-
-      # create finds it rather than making a second one).
+      # No files: here on purpose -- build-flash.yml's attach-assets job uploads disk
+      # images into this same release later (get-or-create, not a second release).
       - name: Publish release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -425,11 +404,8 @@ jobs:
   # jobs.<id>.uses runs build-flash.yml as a real job in *this* run's
   # graph (same run page), not a separate triggered run.
   #
-  # permissions: is required here -- a called workflow's nested jobs are
-  # capped by what the *calling* job grants, not its own per-job
-  # permissions. Without this, GitHub fell back to the repo default
-  # (read) and failed: "The nested job 'release' is requesting
-  # 'contents: write', but is only allowed 'contents: read'."
+  # permissions: required -- a called workflow's jobs are capped by the *calling* job's
+  # grant, not their own (confirmed: without this, write requests failed as read-only).
   build-flash:
     name: Build flash images
     needs: [discover, build_push, release-meta]

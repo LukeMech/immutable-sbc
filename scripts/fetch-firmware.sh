@@ -1,7 +1,6 @@
 #!/bin/bash
-# Downloads and verifies a firmware blob. Generic on purpose: which URL
-# and checksum to use is a per-board concern (see images/boards.toml),
-# not something this script should know about.
+# Downloads and verifies a firmware blob. Generic on purpose: which URL/checksum
+# to use is a per-board concern (images/boards.toml), not this script's.
 #
 # Usage: fetch-firmware.sh <url> <sha256> <output>
 

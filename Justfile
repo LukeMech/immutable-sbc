@@ -75,14 +75,8 @@ sudoif command *args:
     }
     sudoif {{ command }} {{ args }}
 
-# Builds a container image using Podman.
-#
-# $variant - Which images/<variant>/ to build (default: "rock5"); see
-#           images/variants.toml. $target_image's default already appends
-#           it -- never edit image-template.env's IMAGE_NAME to include one.
-#
-# just build $variant $target_image $tag
-# Example: just build rock5 myimage mytag  (builds 'myimage:mytag' from images/rock5/)
+# $variant picks images/<variant>/ (default "rock5", see images/variants.toml).
+# $target_image's default already appends it -- never bake one into IMAGE_NAME.
 
 # Build the image using the specified parameters
 build $variant="rock5" $target_image=(image_name + "-" + variant) $tag=default_tag:
@@ -119,16 +113,10 @@ build $variant="rock5" $target_image=(image_name + "-" + variant) $tag=default_t
 
 # Split the image for smaller updates.
 #
-# chunkah image hardcoded below, not pinned by digest -- unlike
-# fedora-bootc's near-daily "44" rebuilds (see Containerfile),
-# quay.io/coreos/chunkah:latest is a small, deliberately-released utility
-# image with no equivalent stale-digest risk.
+# chunkah:latest is fine unpinned (small, deliberately-released, unlike fedora-bootc).
 #
-# Used instead of `rpm-ostree compose build-chunked-oci`: the latter has
-# repeatedly dropped kernel-adjacent rpm content when re-deriving the
-# image (a custom kmod rpm + firmware rpm -- see images/rock5's aic8800
-# driver). chunkah has no special-casing for bootable/kernel content; it
-# chunks by rpm ownership uniformly, so this content survives intact.
+# Not `rpm-ostree compose build-chunked-oci`: drops kernel-adjacent
+# rpm content (e.g. aic8800) on rederive.
 rechunk $target_image=image_name $tag=default_tag:
     #!/usr/bin/env bash
 

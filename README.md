@@ -2,97 +2,9 @@
 
 A [Universal Blue](https://universal-blue.org/)-style, OTA-updatable,
 minimal GNOME [bootc](https://containers.github.io/bootc/) image builder
-for single-board computers. Everything lives under [`images/`](images/):
-
-- **A variant** (a `[<name>]` table in [`images/variants.toml`](images/variants.toml),
-  e.g. `[rock5]`) is a shared OSTree/container image variant -- what
-  [`build.yml`](.github/workflows/build.yml) matrixes over. Each
-  one also has a real directory (`images/<suffix>/`, e.g.
-  [`images/rock5/`](images/rock5/)) mirroring the top-level repo layout
-  -- `build_files/` for its own numbered build hooks, an optional
-  `system_files/` overlay -- since a variant can bundle both. Package
-  name is always `immutable-sbc-<suffix>`.
-- **A board** (a `[<board>]` table in [`images/boards.toml`](images/boards.toml))
-  is one physical, flashable board -- what
-  [`build-flash.yml`](.github/workflows/build-flash.yml) matrixes over.
-  Its config never needs more than a few fields plus maybe a firmware
-  blob's URL/checksum, so every board is just a table in one shared file
-  rather than its own directory. Each board picks which variant's image
-  to flash and declares its own disk layout and (if needed) firmware.
-
-A variant isn't tied to one board: multiple boards can share a variant if
-they need identical OS content but different disk layouts. Today there's
-one of each:
-
-## rock5: RK3588(S) boards needing the AIC8800 Wi-Fi/BT driver
-
-See the `[rock5]` table in [`images/variants.toml`](images/variants.toml).
-Built from
-[`ublue-os/image-template`](https://github.com/ublue-os/image-template)'s
-tooling, on top of a minimal, Wayland-only GNOME session: shell, settings,
-a file manager and a terminal. No games, no extra bundled GNOME apps, no
-Flatpak/Flathub, no `gnome-initial-setup` wizard -- GDM autologins
-straight to the desktop as the baked-in `lm` account instead (fixed by
-design: this is a personal SBC image, not a multi-user/shared
-deployment). The account's password is locked, not merely blank --
-nothing ever prompts for one, since GDM autologin, passwordless sudo
-(`system_files/etc/sudoers.d/lm-nopasswd`) and a matching polkit rule
-(`system_files/etc/polkit-1/rules.d/90-nopasswd-lm.rules`) don't need it
-either. Screen locking is disabled outright, not just deferred
-(`system_files/etc/dconf/db/local.d/04-no-lock`) -- a locked account has
-no password that could ever authenticate a locked session back open, so
-manually locking (Super+L, the system-menu "Lock" entry) would otherwise
-strand you at an unsolvable password prompt, recoverable only by
-power-cycling the board. Locale defaults to `en_US.UTF-8` and the
-keyboard layout to `us` (`system_files/etc/locale.conf`, `vconsole.conf`,
-`X11/xorg.conf.d/00-keyboard.conf`, and GNOME's own input source via
-`dconf`; also seeded into `system_files/usr/share/factory/var/lib/
-AccountsService/users/lm`, copied into place at first boot by
-`system_files/usr/lib/tmpfiles.d/lm-accountsservice.conf` -- content
-placed directly under `system_files/var/` never reaches a real
-deployment, since bootc/ostree discards whatever's baked into `/var` in
-the container image). The screen never blanks and the system never
-suspends (also set via `dconf`, still changeable in Settings afterward --
-see [`build_files/01-gnome-minimal.sh`](build_files/01-gnome-minimal.sh)).
-
-The onboard AIC8800D80 combo chip needs the
-[`aic8800-usb-dkms`](https://copr.fedorainfracloud.org/coprs/ausil/aic8800-dkms/)
-COPR package for Wi-Fi/BT, built once at container *build* time in a
-writable layer, not on the deployed read-only system. Neither the built
-kernel module nor the firmware it loads at runtime ship as bare files or
-depend on the upstream `aic8800-usb-dkms`/`aic8800-firmware` packages
-surviving into the final image -- both get pulled into one
-self-contained `kmod-aic8800-usb` rpm instead, so they're rpm-database
-tracked and don't depend on how any later step in the pipeline
-re-derives the image. See
-[`images/rock5/build_files/10-aic8800-wifi-bt.sh`](images/rock5/build_files/10-aic8800-wifi-bt.sh)
-for the full story (this was tightened twice after real-hardware testing
-turned up two separate ways bare/upstream-owned files were getting
-dropped before ever reaching a deployed board).
-
-The RK3588(S) NPU (`accel/rocket` in Mesa/the kernel) is wired in
-upstream `rk3588-base.dtsi` -- real register addresses, clocks,
-power-domains, all three cores -- but shipped `status = "disabled"` on
-the RK3588S boards specifically (confirmed on real hardware: the module
-loads, but `/dev/accel/` stays empty since nothing ever binds to it).
-[`images/rock5/build_files/20-npu-devicetree.sh`](images/rock5/build_files/20-npu-devicetree.sh)
-patches the kernel package's own compiled `.dtb` files directly
-(`fdtput`, by node path, not a recompile from source) to flip that
-status to `okay` on every `rock-5*` board's dtb -- a no-op on the
-full-RK3588 boards, which already enable it upstream. Requires a kernel
-new enough to ship the `rocket` driver at all (mainline since ~6.10);
-Mesa's userspace side (`mesa-libTeflon`, the TensorFlow Lite delegate)
-is a separate, currently-unaddressed piece.
-
-**A container image** on `ghcr.io/lukemech/immutable-sbc-rock5`, rebuilt
-on every push to `main`, plus a biweekly schedule (`build.yml`) as a
-fallback for quiet periods with no pushes. Once installed, `bootc upgrade`
-pulls updates the same way any bootc/ostree system does -- no reflashing
-required. Images are rechunked with [chunkah](https://github.com/coreos/chunkah)
-(`just rechunk`, in the `Justfile`) rather than `rpm-ostree compose
-build-chunked-oci` -- chunkah has no special-casing for bootable/kernel
-content, which the classic rechunker does and which was implicated in one
-of the two dropped-file bugs above.
+for single-board computers. Everything lives under [`images/`](images/)
+-- see [`images/README.md`](images/README.md) for how variants and
+boards fit together. Today there's one of each:
 
 ## rock-5c: Radxa ROCK 5C (RK3588S)
 
@@ -101,51 +13,31 @@ Flashes the `rock5` variant above.
 
 ### What you get
 
-- **A microSD/eMMC image** (`.raw`, zstd-compressed) -- the only thing
-  the *Build flash image* workflow and [Release](../../releases) assets
-  actually produce. Built on demand via a manual dispatch, or
-  automatically attached to the [Release](../../releases) that
-  `build.yml`'s `release-meta` job creates and tags itself
-  (`v<fedora-version>.<date>`, e.g. `v44.20260905`, auto-incrementing
-  per day if more than one lands the same day) once the container image
-  has published.
+- **A microSD/eMMC image** (`.raw`, zstd-compressed) -- built on demand via manual dispatch, or attached
+  automatically to the [Release](../../releases) that `build.yml`'s `release-meta` job creates and tags
+  (`v<fedora-version>.<date>`, e.g. `v44.20260905`) once the container image has published.
 
-`just build-qcow2`/`just build-iso` also exist in the Justfile (see
-"Rebuilding it yourself" below), but neither is part of this pipeline or
-currently verified -- `build-iso` specifically is broken as of this
-writing, since it references `disk_config/iso.toml`, which doesn't
-exist.
+`just build-qcow2`/`just build-iso` also exist (see "Rebuilding it yourself" below) but aren't part of this
+pipeline or verified -- `build-iso` is currently broken (references a nonexistent `disk_config/iso.toml`).
 
 ### Why this needed more than the stock template
 
 Two things about the ROCK 5C that a generic x86 ublue image doesn't have
 to deal with:
 
-1. **No ROM UEFI.** RK3588 boards boot via Rockchip's own boot ROM ->
-   SPL -> firmware chain. [`edk2-rk3588`](https://github.com/edk2-porting/edk2-rk3588)
-   provides a real UEFI environment on top of that, which is what lets a
-   completely standard Fedora/GRUB/aarch64 boot flow work at all. The
-   ROCK 5C has no onboard SPI-NOR (it's an optional, eMMC-connector-
-   exclusive accessory), so this firmware has to live on the same medium
-   as the OS on every image. [`scripts/compose-sdcard-image.sh`](scripts/compose-sdcard-image.sh)
-   handles this: it dd's the firmware image (fetched generically by
-   [`scripts/fetch-firmware.sh`](scripts/fetch-firmware.sh), pinned +
-   sha256-verified, URL/checksum declared in this board's own
-   `edk2_url`/`edk2_sha256` fields in `images/boards.toml`) to the front
-   of the disk, then relocates the normal bootc-image-builder GPT
-   (ESP + boot + root) to start right after it, preserving every
-   filesystem UUID, partition UUID and GPT attribute bit along the way.
-   The result is checked, not assumed: the composed disk is confirmed to
-   have a genuine protective (not corrupt/hybrid) MBR, a consistent GPT,
-   and a real EFI System Partition before the build is allowed to
-   succeed.
+1. **No ROM UEFI.** RK3588 boards boot via Rockchip's boot ROM -> SPL -> firmware chain;
+   [`edk2-rk3588`](https://github.com/edk2-porting/edk2-rk3588) provides the UEFI environment a standard
+   Fedora/GRUB/aarch64 boot flow needs. The ROCK 5C has no onboard SPI-NOR, so this firmware has to share
+   the same medium as the OS on every image. [`scripts/compose-sdcard-image.sh`](scripts/compose-sdcard-image.sh)
+   dd's the firmware (fetched + sha256-verified by [`scripts/fetch-firmware.sh`](scripts/fetch-firmware.sh),
+   URL/checksum from `images/boards.toml`) to the front of the disk, then relocates the bootc-image-builder
+   GPT (ESP + boot + root) after it, preserving every UUID and GPT attribute bit -- then verifies the result
+   has a genuine protective MBR, a consistent GPT, and a real EFI System Partition before allowing the build to succeed.
 2. **Wi-Fi/BT.** Handled by the `rock5` variant above, not by this board
    -- it's a property of the OS image, not the disk.
 
-Everything else -- kernel, GPU (Panthor/Mali G610), display -- comes from
-stock Fedora. The `rk3588s-rock-5c` device tree and the RK3588 kernel
-drivers needed for storage/USB/ethernet/GPU/display are upstream in
-mainline Linux, so no vendor kernel is used.
+Everything else -- kernel, GPU (Panthor/Mali G610), display -- comes from stock Fedora: the `rk3588s-rock-5c`
+device tree and RK3588 drivers for storage/USB/ethernet/GPU/display are upstream in mainline Linux, no vendor kernel needed.
 
 ### Flashing
 
@@ -166,13 +58,9 @@ mainline Linux, so no vendor kernel is used.
 3. Boot the ROCK 5C from that card -- GDM autologins straight to the
    desktop as the baked-in `lm` account, no first-boot setup wizard and
    no password to type.
-4. The root filesystem grows to fill the rest of the card/eMMC
-   automatically on first boot
-   (`immutable-sbc-growroot.service`, see
-   [`build_files/00-default-config.sh`](build_files/00-default-config.sh))
-   -- the raw image itself is deliberately built small
-   ([`disk_config/disk.toml`](disk_config/disk.toml)), it isn't meant to
-   reflect the actual capacity of the card you're flashing onto.
+4. The root filesystem grows to fill the rest of the card/eMMC automatically on first boot
+   (`immutable-sbc-growroot.service`, see [`build_files/00-default-config.sh`](build_files/00-default-config.sh))
+   -- the raw image itself is deliberately built small ([`disk_config/disk.toml`](disk_config/disk.toml)).
 
 ## OTA updates
 
@@ -183,45 +71,29 @@ sudo bootc upgrade
 sudo systemctl reboot
 ```
 
-Images are signed with [cosign](https://github.com/sigstore/cosign); the
-public key -- the same one baked into the image at
-`/etc/pki/containers/lukemech-cosign.pub` -- lives at
-[`system_files/etc/pki/containers/lukemech-cosign.pub`](system_files/etc/pki/containers/lukemech-cosign.pub)
-(one canonical copy, not duplicated at the repo root). Verify a pulled
-image yourself with:
+Images are signed with [cosign](https://github.com/sigstore/cosign); the public key baked into the image
+(`/etc/pki/containers/lukemech-cosign.pub`, canonical copy at
+[`system_files/etc/pki/containers/lukemech-cosign.pub`](system_files/etc/pki/containers/lukemech-cosign.pub))
+lets you verify a pulled image yourself:
 
 ```bash
 cosign verify --key system_files/etc/pki/containers/lukemech-cosign.pub \
   ghcr.io/lukemech/immutable-sbc-rock5:latest
 ```
 
-The deployed system enforces this itself, too, and strictly:
-`system_files/etc/containers/policy.json`'s top-level default is
-`reject`, with exactly one carve-out on the `docker` transport --
-`ghcr.io/lukemech` requires a valid cosign signature. That's the actual
-gate: it's checked against anything being *pulled* over the network, so
-no other registry is reachable at all (a plain `podman pull` of anything
-else, including toolbox/distrobox images, is refused outright until
-explicitly added to the policy). The matching
-`system_files/etc/containers/registries.d/lukemech.yaml` points
-podman/skopeo/bootc at cosign's signature storage.
+The deployed system enforces this itself: `system_files/etc/containers/policy.json`'s default is `reject`,
+with one carve-out -- `ghcr.io/lukemech` requires a valid cosign signature on the `docker` transport. That's
+checked against anything actually *pulled*, so no other registry is reachable until explicitly added to the
+policy. `system_files/etc/containers/registries.d/lukemech.yaml` points podman/skopeo/bootc at cosign's signature storage.
 
-The `containers-storage` transport (images already resolved into local
-storage, rather than being pulled) is left `insecureAcceptAnything` --
-re-checking a signature there wouldn't catch anything the `docker`
-transport didn't already catch on the way in, it would only block
-legitimate local reads of an already-verified image. `bootc-image-builder`
-installs from exactly such a local reference when baking a fresh disk
-image (confirmed in CI: scoping this to `ghcr.io/lukemech` the same way
-as `docker` doesn't work -- `containers-storage` scopes require a
-`[graph-driver@graph-root]` store-specifier prefix, and osbuild's build
-root is a different, unpredictable path every run).
-`system_files/usr/lib/bootc/install/01-sigpolicy.toml` sets
-`enforce-container-sigpolicy = true`, so every install path -- fresh
-flashes via bootc-image-builder included -- records the deployment's
-origin as `ostree-image-signed` instead of `ostree-unverified-registry`.
-That's what actually makes policy.json's rule get consulted on every
-`sudo bootc upgrade`; an unsigned or wrongly-signed image is refused.
+The `containers-storage` transport (images already resolved into local storage) stays `insecureAcceptAnything`
+-- re-checking there wouldn't catch anything `docker` didn't already catch on the way in, and would only block
+legitimate reads of an already-verified image; `bootc-image-builder` installs from exactly such a local
+reference when baking a disk image (confirmed in CI: scoping this like `docker` doesn't work --
+`containers-storage` needs a `[graph-driver@graph-root]` prefix, and osbuild's build root path is unpredictable).
+`system_files/usr/lib/bootc/install/01-sigpolicy.toml` sets `enforce-container-sigpolicy = true`, so every
+install path -- fresh flashes included -- records the deployment's origin as `ostree-image-signed`, which is
+what makes policy.json's rule get consulted on every `sudo bootc upgrade`.
 
 ## Rebuilding it yourself
 
@@ -243,14 +115,15 @@ for the general shape of this repo -- `Containerfile` + `build_files/` +
 
 | Path | Purpose |
 |---|---|
+| [`images/README.md`](images/README.md) | What a variant vs. a board is, and how they relate -- start here before `boards.toml`/`variants.toml` |
 | [`images/boards.toml`](images/boards.toml) | Every physical board this repo flashes for -- one `[<board>]` table each: which variant it flashes, where its disk config lives, EDK2 firmware URL/sha256 |
 | [`images/variants.toml`](images/variants.toml) | Every OSTree/container image variant this repo builds -- one `[<name>]` table each: its `suffix` (-> `images/<suffix>/` and the package name) and `description` |
-| [`images/rock5/`](images/rock5/) | The `rock5` variant's own overlay, mirroring the top-level layout: `build_files/` (the aic8800 driver hook) and, if it ever needs one, a `system_files/` |
+| [`images/rock5/`](images/rock5/) | The `rock5` variant's own overlay, mirroring the top-level layout: `build_files/` (the aic8800 driver hook, the mesa-libTeflon hook) and, if it ever needs one, a `system_files/` -- see [`images/rock5/README.md`](images/rock5/README.md) |
 | [`disk_config/`](disk_config/) | bootc-image-builder disk configs (deliberately small partition floors, not final sizes -- see the growroot service), referenced by path from `images/boards.toml` |
-| `Containerfile`, `build_files/`, `system_files/` | The OCI image, generic across every variant: base Fedora bootc (aarch64), minimal GNOME, the default account (`sysusers.d`/`tmpfiles.d`), never-blank/never-sleep power defaults (`dconf`), the root-growth service, the shared root-fs declaration, and the enforced container signature policy (`policy.json`, `registries.d/lukemech.yaml`, `bootc/install/01-sigpolicy.toml`). Base image and chunkah (Justfile's `rechunk` recipe) are both floating tags, not digest pins -- see their own comments for why. |
+| `Containerfile`, `build_files/`, `system_files/` | The OCI image, generic across variants: base Fedora bootc, minimal GNOME, the default account (`sysusers.d`/`tmpfiles.d`), power defaults (`dconf`), the root-growth service, and the enforced signature policy (`policy.json` + `registries.d/`). Base image and chunkah are floating tags, not digest pins -- see their own comments for why. |
 | `scripts/` | Generic, parameterized tools shared across every variant/board: firmware fetch+verify, disk composition (with GPT/MBR/ESP verification), changelog generation |
-| `.github/workflows/build.yml` | Matrixes over every variant; builds, rechunks (chunkah), pushes and signs each OCI image to GHCR (the OTA path) on every push to `main`, its own biweekly schedule, or manual dispatch -- rechunking/tagging/signing all skip on pull requests, which only need to prove the image still builds. Every variant diffs its freshly built image against the last release's commit -- walking back through git tag/commit history (`scripts/diff-packages.sh` / `scripts/list-packages.sh`) for one with a real, actually-pushed `latest-<shortsha>` tag, not just `:latest` (which can drift ahead of the last release) -- right before pushing; a schedule run (the biweekly cron's only reason to exist -- catching upstream package updates during quiet periods) that finds no package changes skips publishing/signing/releasing entirely, while a push or manual dispatch always publishes regardless. Its own `release-meta` job then publishes a release (tagged `v<fedora-version>.<date>.<N>`, auto-incrementing per day) with a changelog built from that same pre-computed package diff, as soon as the container image itself is live on GHCR -- before build-flash.yml even starts, since the release is about the container image someone's `bootc upgrade` already pulled, not the (much slower) disk images. |
-| `.github/workflows/build-flash.yml` | Called as a reusable workflow (`uses:`, not a separate triggered run) only after build.yml's `release-meta` job has already published a release -- receives that release's tag as an input and builds each board's raw disk image, attaching it to that already-live release once ready. A direct `workflow_dispatch` builds the flash images without attaching them to anything (no tag to attach to). |
+| `.github/workflows/build.yml` | Matrixes over every variant; builds, rechunks, pushes and signs each OCI image to GHCR on push to `main`, a biweekly schedule, or manual dispatch (PRs skip rechunk/push/sign). Diffs against the last release's commit to build a changelog and skip publishing on a no-op schedule run; `release-meta` then tags and publishes the release before build-flash.yml starts. |
+| `.github/workflows/build-flash.yml` | Reusable workflow (`uses:`) called after `release-meta` publishes a release; builds each board's raw disk image and attaches it to that release. A direct dispatch builds images without attaching them. |
 | `.github/dependabot.yml` | Keeps every GitHub Actions SHA pin current; its docker-ecosystem entry stays configured for whenever a `FROM ...@sha256:...` digest pin is reintroduced, but nothing currently uses one |
 
 ## Known limitations / please report back
@@ -283,8 +156,7 @@ If you hit any of these, please open an issue.
 
 - [`ublue-os/image-template`](https://github.com/ublue-os/image-template) --
   the base tooling this repo is built on
-- [`edk2-porting/edk2-rk3588`](https://github.com/edk2-porting/edk2-rk3588) /
-  [`kwankiu/edk2-rk3588`](https://github.com/kwankiu/edk2-rk3588) -- UEFI
+- [`lukemech/edk2-rk3588`](https://github.com/lukemech/edk2-rk3588) -- UEFI
   firmware for RK3588 boards
 - [`ausil/aic8800-dkms`](https://copr.fedorainfracloud.org/coprs/ausil/aic8800-dkms/) --
   Wi-Fi/BT driver COPR
