@@ -111,6 +111,16 @@ jobs:
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
 
+      # Only boards declaring edk2_url need firmware. Local filename is arbitrary
+      # (never inspected downstream) -- hardcoded rather than a boards.toml field.
+      - name: Fetch board firmware
+        if: steps.board-config.outputs.has_firmware == 'true'
+        run: |
+          ./scripts/fetch-firmware.sh \
+            "${{ steps.board-config.outputs.firmware_url }}" \
+            "${{ steps.board-config.outputs.firmware_sha256 }}" \
+            firmware.img
+
       - name: Build disk image
         id: build
         uses: osbuild/bootc-image-builder-action@b43efcb44d76d46d55022b66d3dbb89bdf6e5c9a # main
@@ -121,16 +131,6 @@ jobs:
           # Root filesystem type is declared in-image (00-root-filesystem.toml),
           # not here -- no --rootfs flag needed.
           additional-args: --use-librepo=True
-
-      # Only boards declaring edk2_url need firmware. Local filename is arbitrary
-      # (never inspected downstream) -- hardcoded rather than a boards.toml field.
-      - name: Fetch board firmware
-        if: steps.board-config.outputs.has_firmware == 'true'
-        run: |
-          ./scripts/fetch-firmware.sh \
-            "${{ steps.board-config.outputs.firmware_url }}" \
-            "${{ steps.board-config.outputs.firmware_sha256 }}" \
-            firmware.img
 
       - name: Compose flashable image
         run: |

@@ -19,13 +19,17 @@ Lite delegate for the RK3588(S) NPU (`teflon` frontend, `rocket` Gallium driver)
 the NPU. Exposing the NPU at the kernel/devicetree level is handled upstream instead, by this board's
 [`edk2_url`](../boards.toml) firmware rather than a kernel-side devicetree patch.
 
-[`build_files/21-rocket-demo.sh`](build_files/21-rocket-demo.sh) installs `rocket-demo`, a CLI that reports
-whether `/dev/accel/accel0` is present and runs a COCO object detector (SSD MobileNetV1, quantized) on a
-dashcam photo once on CPU and once through Teflon's delegate -- printing what each run found (car, person,
-bicycle, traffic light, ...), both inference times, and saving an annotated copy to
-`/tmp/rocket-demo-output.jpg`, so you can see the NPU actually being used (or find out why not).
-`--image`/`--model`/`--labels`/`--delegate` swap in your own files instead of the bundled defaults, and
-`--benchmark N` replaces the single-shot comparison with N-iteration throughput (FPS) per backend.
+[`build_files/21-npu-run.sh`](build_files/21-npu-run.sh) installs `npu-run`, a CLI that reports whether
+`/dev/accel/accel0` is present and, by default, runs a COCO object detector (SSD MobileNetV1, quantized) on a
+dashcam photo through Teflon's NPU delegate alone -- printing what it found (car, person, bicycle, traffic
+light, ...), the inference time, and saving an annotated copy (previewed inline via `chafa` when it's
+installed, which it is here). `--check` also runs the same model on CPU and prints both for comparison;
+`--benchmark N` instead measures N-iteration throughput (FPS) per backend, running CPU and NPU concurrently
+by default (a mixed-workload number) or one after another with `--isolate` (a clean per-backend number).
+`--image`/`--model`/`--labels`/`--delegate`/`--output` swap in your own files instead of the bundled
+defaults, and `--threads` sets how many CPU threads the CPU-side run gets (defaults to all cores -- the
+interpreter defaults to one otherwise). Reading `dmesg` needs root (Fedora's default
+`kernel.dmesg_restrict`), so run as `sudo npu-run` to see rocket's own kernel log lines.
 
 **A container image** on `ghcr.io/lukemech/immutable-sbc-rock5`, rebuilt on every push to `main` plus a
 biweekly schedule (`build.yml`) as a fallback for quiet periods. Once installed, `bootc upgrade` pulls updates

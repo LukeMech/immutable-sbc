@@ -24,7 +24,8 @@ systemctl enable bluetooth.service
 # CPU/disk fields) and unmaintained; fastfetch resolves both correctly.
 dnf5 install -y \
     fastfetch \
-    btop
+    btop \
+    chafa
 
 # Hide btop from the app grid -- it's a TUI tool, still usable from a
 # terminal, just not meant to be launched as a windowed app.

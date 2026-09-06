@@ -2,20 +2,23 @@
 
 set -ouex pipefail
 
-### rocket-demo (images/rock5/system_files/usr/bin/rocket-demo)
+### npu-run (images/rock5/system_files/usr/bin/npu-run)
 #
-# Ships an offline COCO object-detection demo so `rocket-demo` can show whether
-# the RK3588(S) NPU (accel/rocket + mesa-libTeflon, see 20-mesa-teflon.sh) is
-# actually engaged, by comparing CPU-only vs NPU-delegated inference time on a
-# road-traffic photo (person/car/bicycle/traffic light/... are exactly what a
-# COCO-trained detector recognizes). Model, labels and test image are pinned by
-# URL+sha256 -- same reasoning as images/boards.toml's edk2_url/edk2_sha256: no
-# floating downloads baked into a shipped image.
+# Ships an offline COCO object detector so `npu-run` can run it through the
+# RK3588(S) NPU (accel/rocket + mesa-libTeflon, see 20-mesa-teflon.sh) by
+# default, plus --check/--benchmark modes that compare it against CPU-only
+# inference, on a road-traffic photo (person/car/bicycle/traffic light/... are
+# exactly what a COCO-trained detector recognizes). Model, labels and test
+# image are pinned by URL+sha256 -- same reasoning as images/boards.toml's
+# edk2_url/edk2_sha256: no floating downloads baked into a shipped image.
 #
 # Stays within the backbones Mesa's own Teflon docs say are validated against
 # rocket (MobileNetV1/V2, MobileDet) rather than chasing a newer detector
 # architecture -- something like EfficientDet or YOLO uses ops rocket doesn't
 # support yet, which would just silently fall back to CPU and defeat the demo.
+#
+# chafa renders the annotated output image directly in the terminal (over SSH
+# too) so there's no need to scp it off the board just to look at it.
 
 dnf5 -y install python3 python3-pip python3-numpy python3-pillow
 
@@ -25,10 +28,10 @@ dnf5 -y install python3 python3-pip python3-numpy python3-pillow
 # pip-installing over the system Python: `--system-site-packages` reuses the
 # rpm-tracked numpy/Pillow above (kept current by normal package updates)
 # without needing pip's own --break-system-packages override.
-python3 -m venv --system-site-packages /usr/lib/rocket-demo/venv
-/usr/lib/rocket-demo/venv/bin/pip install --no-cache-dir "ai-edge-litert==2.2.0"
+python3 -m venv --system-site-packages /usr/lib/npu-run/venv
+/usr/lib/npu-run/venv/bin/pip install --no-cache-dir "ai-edge-litert==2.2.0"
 
-DEMO_DIR=/usr/share/rocket-demo
+DEMO_DIR=/usr/share/npu-run
 install -d "${DEMO_DIR}"
 TMP=$(mktemp -d)
 
@@ -57,4 +60,4 @@ install -m 644 "${TMP}/test.jpg" "${DEMO_DIR}/test.jpg"
 
 rm -rf "${TMP}"
 
-chmod 755 /usr/bin/rocket-demo
+chmod 755 /usr/bin/npu-run
