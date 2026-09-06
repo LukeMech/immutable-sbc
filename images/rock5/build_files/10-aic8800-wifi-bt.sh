@@ -10,7 +10,8 @@ set -ouex pipefail
 KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
 ARCH=$(uname -m)
 
-# dnf5-command(copr) is installed by 00-default-config.sh, shared by every hook that needs it.
+# dnf5-plugins (providing the copr command) is installed by 00-default-config.sh,
+# shared by every hook that needs it.
 dnf5 -y copr enable ausil/aic8800-dkms
 
 # aic8800-usb-dkms's %post auto-runs `dkms install` against the build host's kernel
@@ -110,8 +111,8 @@ fi
 # and firmware ship as their own rpm-tracked package.
 rm -rf "/var/lib/dkms/${PACKAGE_NAME}"
 
-# The copr repo itself is removed generically at the end of build.sh, once every
-# hook (not just this one) is done with dnf5-command(copr).
+# The copr repo/plugin itself is removed generically at the end of build.sh, once
+# every hook (not just this one) is done with it.
 dnf5 -y remove aic8800-usb-dkms aic8800-firmware dkms "kernel-devel-${KVER}" rpm-build
 
 dnf5 -y install "${RPM_PATH}"

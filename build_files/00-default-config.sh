@@ -11,7 +11,11 @@ sed -i '/^\[main\]/a install_weak_deps=False' /etc/dnf/dnf.conf
 # quay.io/fedora/fedora-bootc doesn't bundle the copr plugin the way ublue-os base
 # images do -- install it once here so any hook below can just `dnf5 copr enable ...`
 # without repeating this itself. Removed again in final housekeeping, below.
-dnf5 -y install 'dnf5-command(copr)'
+#
+# Named as the real package (dnf5-plugins), not the 'dnf5-command(copr)' virtual
+# capability it provides -- removing by that capability string later silently
+# matched nothing, leaving dnf5-plugins installed in the final image regardless.
+dnf5 -y install dnf5-plugins
 dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-gpg-keys
 
 ### Grow root on first boot

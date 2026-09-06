@@ -45,7 +45,7 @@ for repo_file in /etc/yum.repos.d/_copr:*.repo; do
     project=$(basename "${repo_file}" .repo | cut -d: -f3-4 --output-delimiter=/)
     dnf5 -y copr remove "${project}"
 done
-dnf5 -y remove 'dnf5-command(copr)' terra-release terra-gpg-keys
+dnf5 -y remove dnf5-plugins terra-release terra-gpg-keys
 
 # Final housekeeping
 dnf5 -y clean all
