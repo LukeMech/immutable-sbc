@@ -6,7 +6,7 @@ set -ouex pipefail
 #
 # Built from hailo-ai/hailort-drivers (hailo8 branch, GPL-2.0, pinned commit -- no DKMS/COPR
 # needed, its Makefile builds a plain out-of-tree module directly) into our own
-# self-contained "kmod-hailo-pci" rpm, same reasoning as kmod-aic8800-usb: no bare files,
+# self-contained "kmod-hailo8-pci" rpm, same reasoning as kmod-aic8800-usb: no bare files,
 # no runtime dependency on build-time-only packages surviving into the image.
 #
 # Driver + firmware only. Nothing else in this image can use the chip yet: Hailo has no
@@ -46,10 +46,10 @@ if [[ -z "${KO_PATH}" ]]; then
     exit 1
 fi
 
-RPM_NAME="kmod-hailo-pci"
+RPM_NAME="kmod-hailo8-pci"
 BUILDROOT=$(mktemp -d)
 
-MODULE_DIR="${BUILDROOT}/usr/lib/modules/${KVER}/extra/hailo_pci"
+MODULE_DIR="${BUILDROOT}/usr/lib/modules/${KVER}/extra/hailo8_pci"
 install -d "${MODULE_DIR}"
 install -m 644 "${KO_PATH}" "${MODULE_DIR}/"
 
@@ -79,7 +79,7 @@ Hailo-8/8L accelerator on a Raspberry Pi AI HAT+/AI Kit. Built from
 hailo-ai/hailort-drivers (commit ${DRIVER_COMMIT}).
 
 %files
-/usr/lib/modules/${KVER}/extra/hailo_pci
+/usr/lib/modules/${KVER}/extra/hailo8_pci
 /usr/lib/firmware/hailo/hailo8_fw.bin
 /usr/lib/udev/rules.d/51-hailo-udev.rules
 
