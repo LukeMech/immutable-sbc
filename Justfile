@@ -75,11 +75,11 @@ sudoif command *args:
     }
     sudoif {{ command }} {{ args }}
 
-# $variant picks images/<variant>/ (default "rock5", see images/variants.toml).
+# $variant picks images/<variant>/ (default "rk3588", see images/variants.toml).
 # $target_image's default already appends it -- never bake one into IMAGE_NAME.
 
 # Build the image using the specified parameters
-build $variant="rock5" $target_image=(image_name + "-" + variant) $tag=default_tag:
+build $variant="rk3588" $target_image=(image_name + "-" + variant) $tag=default_tag:
     #!/usr/bin/env bash
 
     set -euox pipefail
@@ -277,32 +277,32 @@ _build-bib $target_image $tag $type $config: (_rootful_load_image target_image t
 # Builds the image via the Containerfile, then a bootable image via BIB.
 # variant is appended onto target_image's default automatically, same as `build`.
 
-# Example: just _rebuild-bib rock5 localhost/fedora-rock5 latest qcow2 disk_config/disk.toml
+# Example: just _rebuild-bib rk3588 localhost/fedora-rk3588 latest qcow2 disk_config/disk.toml
 _rebuild-bib $variant $target_image $tag $type $config: (build variant target_image tag) && (_build-bib target_image tag type config)
 
 # Build a QCOW2 virtual machine image
 [group('Build Virtal Machine Image')]
-build-qcow2 $variant="rock5" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_build-bib target_image tag "qcow2" "disk_config/disk.toml")
+build-qcow2 $variant="rk3588" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_build-bib target_image tag "qcow2" "disk_config/disk.toml")
 
 # Build a RAW virtual machine image
 [group('Build Virtal Machine Image')]
-build-raw $variant="rock5" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_build-bib target_image tag "raw" "disk_config/disk.toml")
+build-raw $variant="rk3588" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_build-bib target_image tag "raw" "disk_config/disk.toml")
 
 # Build an ISO virtual machine image
 [group('Build Virtal Machine Image')]
-build-iso $variant="rock5" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_build-bib target_image tag "iso" "disk_config/iso.toml")
+build-iso $variant="rk3588" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_build-bib target_image tag "iso" "disk_config/iso.toml")
 
 # Rebuild a QCOW2 virtual machine image
 [group('Build Virtal Machine Image')]
-rebuild-qcow2 $variant="rock5" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_rebuild-bib variant target_image tag "qcow2" "disk_config/disk.toml")
+rebuild-qcow2 $variant="rk3588" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_rebuild-bib variant target_image tag "qcow2" "disk_config/disk.toml")
 
 # Rebuild a RAW virtual machine image
 [group('Build Virtal Machine Image')]
-rebuild-raw $variant="rock5" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_rebuild-bib variant target_image tag "raw" "disk_config/disk.toml")
+rebuild-raw $variant="rk3588" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_rebuild-bib variant target_image tag "raw" "disk_config/disk.toml")
 
 # Rebuild an ISO virtual machine image
 [group('Build Virtal Machine Image')]
-rebuild-iso $variant="rock5" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_rebuild-bib variant target_image tag "iso" "disk_config/iso.toml")
+rebuild-iso $variant="rk3588" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_rebuild-bib variant target_image tag "iso" "disk_config/iso.toml")
 
 # Run a virtual machine with the specified image type and configuration
 _run-vm $variant $target_image $tag $type $config:
@@ -348,15 +348,15 @@ _run-vm $variant $target_image $tag $type $config:
 
 # Run a virtual machine from a QCOW2 image
 [group('Run Virtal Machine')]
-run-vm-qcow2 $variant="rock5" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_run-vm variant target_image tag "qcow2" "disk_config/disk.toml")
+run-vm-qcow2 $variant="rk3588" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_run-vm variant target_image tag "qcow2" "disk_config/disk.toml")
 
 # Run a virtual machine from a RAW image
 [group('Run Virtal Machine')]
-run-vm-raw $variant="rock5" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_run-vm variant target_image tag "raw" "disk_config/disk.toml")
+run-vm-raw $variant="rk3588" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_run-vm variant target_image tag "raw" "disk_config/disk.toml")
 
 # Run a virtual machine from an ISO
 [group('Run Virtal Machine')]
-run-vm-iso $variant="rock5" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_run-vm variant target_image tag "iso" "disk_config/iso.toml")
+run-vm-iso $variant="rk3588" $target_image=("localhost/" + image_name + "-" + variant) $tag=default_tag: && (_run-vm variant target_image tag "iso" "disk_config/iso.toml")
 
 # Run a virtual machine using systemd-vmspawn
 [group('Run Virtal Machine')]

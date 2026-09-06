@@ -2,7 +2,7 @@
 
 set -ouex pipefail
 
-### npu-run (images/rock5/system_files/usr/bin/npu-run)
+### npu-run (system_files/usr/bin/npu-run)
 #
 # Ships an offline COCO object detector so `npu-run` can run it through the
 # RK3588(S) NPU (accel/rocket + mesa-libTeflon, see 20-mesa-teflon.sh) by

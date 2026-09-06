@@ -1,6 +1,6 @@
 # Lets Mission Center read CPU power draw without root -- one of the three things its
 # "Enabling Additional Values" first-run dialog otherwise asks you to set up (see
-# build_files/01-gnome-minimal.sh, which handles the other two: nethogs' capabilities and
+# build_files/05-gnome-minimal.sh, which handles the other two: nethogs' capabilities and
 # lm_sensors). Same rule path/content as upstream's own setup script
 # (mission-center-devs/gng, platform-linux/bin/missioncenter-magpie-setup-linux).
 #

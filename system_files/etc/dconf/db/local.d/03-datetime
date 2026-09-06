@@ -1,4 +1,4 @@
-# Needs geoclue2 (build_files/01-gnome-minimal.sh) and location services
+# Needs geoclue2 (build_files/05-gnome-minimal.sh) and location services
 # enabled (below) -- automatic-timezone alone does nothing.
 [org/gnome/system/location]
 enabled=true

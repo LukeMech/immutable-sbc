@@ -2,15 +2,17 @@
 """Runs a COCO object-detection model through whatever /dev/accel/accel* NPU is
 present -- the RK3588(S)'s accel/rocket + mesa-libTeflon by default, but --delegate
 takes any TFLite external-delegate .so, and detection at startup reports whatever
-kernel driver/delegate it actually finds rather than assuming rocket/Teflon. Pass
---check to also run the same model on CPU and compare, or --benchmark N to measure
+kernel driver/delegate it actually finds rather than assuming rocket/Teflon. Falls
+back to CPU-only, no error, if the default delegate isn't installed (e.g. on a
+board with no NPU support at all). Pass --check to also run the same model on
+CPU and compare (skipped if there's no delegate), or --benchmark N to measure
 sustained throughput (FPS) instead of a single-shot run -- by default CPU and NPU
 benchmark concurrently (measuring them under mutual contention, closer to a real
 mixed workload); --isolate runs them one after another instead, for a clean
 per-backend number.
 
 Default model/labels/image are installed under /usr/share/npu-run by
-images/rock5/build_files/21-npu-run.sh; pass your own via --model, --labels
+build_files/10-prepare-npu-run-module.sh; pass your own via --model, --labels
 and --image to try a different picture or detector.
 """
 
@@ -117,13 +119,14 @@ def check_accel(delegate_path):
             drivers.add(driver)
         print(f"{dev}: present (kernel driver: {driver or 'unknown'})")
 
-    if os.path.exists(delegate_path):
+    delegate_exists = os.path.exists(delegate_path)
+    if delegate_exists:
         owner = subprocess.run(
             ["rpm", "-qf", delegate_path], capture_output=True, text=True, check=False
         ).stdout.strip()
         print(f"delegate: {delegate_path} ({owner or 'not rpm-owned'})")
     else:
-        print(f"delegate: {delegate_path} MISSING")
+        print(f"delegate: {delegate_path} MISSING -- falling back to CPU-only")
 
     result = subprocess.run(["dmesg"], capture_output=True, text=True, check=False)
     if result.returncode != 0:
@@ -140,6 +143,7 @@ def check_accel(delegate_path):
         else:
             print(f"dmesg: no messages from {', '.join(sorted(drivers))} (buffer may have rotated since boot)")
     print()
+    return delegate_exists
 
 
 def load_labels(path):
@@ -232,7 +236,12 @@ def save_annotated(image, detections, output_path):
     print(f"Annotated image saved to {output_path}")
 
 
-def run_npu_only(args):
+def run_npu_only(args, delegate_exists):
+    if not delegate_exists:
+        cpu_s, cpu_detections, image = detect(None, args, SINGLE_SHOT_ITERATIONS)
+        report("CPU-only inference (no delegate)", cpu_s, cpu_detections, args.score_threshold)
+        save_annotated(image, cpu_detections, args.output)
+        return
     npu_label = f"NPU-accelerated inference (via {os.path.basename(args.delegate)})"
     try:
         npu_s, npu_detections, image = detect(args.delegate, args, SINGLE_SHOT_ITERATIONS)
@@ -243,11 +252,14 @@ def run_npu_only(args):
     save_annotated(image, npu_detections, args.output)
 
 
-def run_check(args):
-    npu_label = f"NPU-accelerated inference (via {os.path.basename(args.delegate)})"
-    cpu_s, cpu_detections, _ = detect(None, args, SINGLE_SHOT_ITERATIONS)
+def run_check(args, delegate_exists):
+    cpu_s, cpu_detections, image = detect(None, args, SINGLE_SHOT_ITERATIONS)
     report("CPU-only inference (no delegate)", cpu_s, cpu_detections, args.score_threshold)
+    if not delegate_exists:
+        save_annotated(image, cpu_detections, args.output)
+        return
 
+    npu_label = f"NPU-accelerated inference (via {os.path.basename(args.delegate)})"
     try:
         npu_s, npu_detections, image = detect(args.delegate, args, SINGLE_SHOT_ITERATIONS)
     except Exception as e:
@@ -259,11 +271,16 @@ def run_check(args):
     save_annotated(image, npu_detections, args.output)
 
 
-def run_benchmark(args):
-    npu_label = f"NPU (via {os.path.basename(args.delegate)})"
+def run_benchmark(args, delegate_exists):
     mode = "isolated" if args.isolate else "concurrent"
     print(f"== Benchmark: {args.benchmark} inferences per backend ({mode}) ==\n")
 
+    if not delegate_exists:
+        cpu_s, _, _ = detect(None, args, args.benchmark)
+        print(f"CPU-only: {1 / cpu_s:6.1f} FPS ({cpu_s * 1000:.2f} ms/inference)")
+        return
+
+    npu_label = f"NPU (via {os.path.basename(args.delegate)})"
     if args.isolate:
         cpu_s, _, _ = detect(None, args, args.benchmark)
         try:
@@ -292,13 +309,13 @@ def run_benchmark(args):
 
 def main():
     args = parse_args()
-    check_accel(args.delegate)
+    delegate_exists = check_accel(args.delegate)
     if args.benchmark:
-        run_benchmark(args)
+        run_benchmark(args, delegate_exists)
     elif args.check:
-        run_check(args)
+        run_check(args, delegate_exists)
     else:
-        run_npu_only(args)
+        run_npu_only(args, delegate_exists)
 
 
 if __name__ == "__main__":

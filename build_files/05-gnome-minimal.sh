@@ -2,12 +2,26 @@
 
 set -ouex pipefail
 
-### mesa-libTeflon - Mesa's NPU userspace delegate (mesa-libTeflon)
-# libteflon.so, a TensorFlow Lite delegate for Mesa's "rocket" Gallium driver (RK3588(S) NPU) -- its own Fedora package, not bundled with Mesa by default.
+### Grow root on first boot
+#
+# Image is built small (disk_config/disk.toml's 1 GiB floor); growroot.service
+# grows root to fill the card on every boot (no-op once maxed).
+dnf5 install -y cloud-utils-growpart btrfs-progs
+systemctl enable immutable-sbc-growroot.service
+
+### zram swap
+#
+# zram-generator sizes zram0 itself at boot from system_files/usr/lib/systemd/
+# zram-generator.conf (`ram / 2`) -- no board-specific tuning needed across
+# the 4/8/16 GiB rock-5* variants. It's a generator, not a service: nothing
+# to systemctl enable, the config's presence is what activates it.
+dnf5 install -y zram-generator
+
+# Gnome etc. -- minimal set of packages to get a working Gnome desktop, plus a few
+# extras (loupe, papers, fastfetch, mission-center) for convenience.
 dnf5 install -y \
     glibc-langpack-en \
     gdm \
-    mesa-libTeflon \
     gnome-shell \
     gnome-shell-extension-appindicator \
     xdg-desktop-portal-gnome \

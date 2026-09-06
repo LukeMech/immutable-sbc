@@ -5,7 +5,7 @@
 # it matches the in-image root filesystem declaration via a subvolume instead.
 #
 # minsize is a floor, not a cap -- osbuild sizes up to fit what's installed.
-# Image is small on purpose; 00-default-config.sh's service grows it to fill the disk.
+# Image is small on purpose; 05-gnome-minimal.sh's service grows it to fill the disk.
 [[customizations.disk.partitions]]
 type = "btrfs"
 minsize = "1 GiB"

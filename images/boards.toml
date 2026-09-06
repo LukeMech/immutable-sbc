@@ -3,13 +3,35 @@
 
 [rock-5c]
 board = "Radxa ROCK 5C (RK3588S)"
-# Which variant's suffix (images/variants.toml) this board flashes -- selects the
-# images/<suffix>/ directory and its "immutable-sbc-<suffix>" package name.
-variant = "rock5"
+variant = "rk3588"
+# No onboard SPI-NOR: firmware ships embedded on the disk. Pinned release+sha256,
+# dd'd to a fixed offset the boot ROM reads directly (firmware_layout = "raw",
+# the default -- see scripts/compose-sdcard-image.sh).
 disk_config = "disk_config/disk.toml"
-
-# No onboard SPI-NOR: UEFI firmware ships embedded on the disk (see
-# scripts/compose-sdcard-image.sh). Pinned to a release+sha256 (dd'd onto
-# every shipped image) -- a floating download would be a supply-chain hole.
 edk2_url = "https://github.com/lukemech/edk2-rk3588/releases/download/v7.2/rock-5c_UEFI_Release_v7.2.img"
 edk2_sha256 = "26839a8bcb4aa08c32eca93ba70b9c2a9a0db35f8960e43c39b16015e8e9c078"
+
+[rpi-4b]
+board = "Raspberry Pi 4 Model B (BCM2711)"
+variant = "rpi"
+# The Pi's EEPROM bootloader just wants a FAT32 first partition -- already the ESP
+# bootc-image-builder makes -- so firmware is copied in, not dd'd (firmware_layout = "fat").
+# pftf/RPi4: self-contained zip (RPI_EFI.fd, 4B/400/CM4 device trees, config.txt,
+# start4.elf/fixup4.dat + overlays/ -- the 4 still needs its own, unlike the 5 below).
+# Also bundles brcm/ Wi-Fi firmware, unused (Fedora's linux-firmware covers it) and
+# skipped by the compose script. sha256 recomputed ourselves from the downloaded asset.
+disk_config = "disk_config/disk.toml"
+firmware_layout = "fat"
+edk2_url = "https://github.com/pftf/RPi4/releases/download/v1.53/RPi4_UEFI_Firmware_v1.53.zip"
+edk2_sha256 = "ca9973e2a7a546b3df871cfb7382e656829114b6dfa424f40dc67cc90a217d88"
+
+[rpi-5]
+board = "Raspberry Pi 5 (BCM2712)"
+variant = "rpi"
+# worproject/rpi5-uefi -- no pftf/RPi5 exists; this is the de facto EDK2 for the 5.
+# VPU boot blobs live in its own EEPROM/SPI flash now, so unlike rpi-4b, this zip is
+# just RPI_EFI.fd + config.txt + a device tree. v0.3 (2024-03-16) is still latest.
+disk_config = "disk_config/disk.toml"
+firmware_layout = "fat"
+edk2_url = "https://github.com/worproject/rpi5-uefi/releases/download/v0.3/RPi5_UEFI_Release_v0.3.zip"
+edk2_sha256 = "2337df318845448ebcc8a6a587d15dccec44b54c665ece21250d2f6170732724"

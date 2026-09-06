@@ -79,7 +79,8 @@ jobs:
         run: |
           set -x
           sudo apt-get update -y
-          sudo apt-get install -y podman gdisk zstd
+          # mtools: needed by compose-sdcard-image.sh's "fat" layout only.
+          sudo apt-get install -y podman gdisk zstd mtools
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -102,6 +103,8 @@ jobs:
           if has_firmware:
               print(f"firmware_url={data['edk2_url']}")
               print(f"firmware_sha256={data['edk2_sha256']}")
+              # "raw": fixed-offset dd. "fat": copied into the ESP. Both in compose-sdcard-image.sh.
+              print(f"firmware_layout={data.get('firmware_layout', 'raw')}")
           PY
 
       - name: Prepare environment
@@ -154,6 +157,7 @@ jobs:
 
           if [[ "${{ steps.board-config.outputs.has_firmware }}" == "true" ]]; then
             ./scripts/compose-sdcard-image.sh \
+              "${{ steps.board-config.outputs.firmware_layout }}" \
               firmware.img \
               "${RAW_IMAGE}" \
               "${OUT_NAME}.raw"

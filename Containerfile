@@ -15,7 +15,7 @@ FROM quay.io/fedora/fedora-bootc:44
 
 # Which images/<VARIANT>/ this image builds -- see build.yml, which
 # matrixes over every directory under images/ and passes each one here.
-ARG VARIANT=rock5
+ARG VARIANT=rk3588
 
 ### MODIFICATIONS
 ## Modify the image or install packages by editing build.sh, run below as recommended.

@@ -3,8 +3,10 @@
 #
 # Not tied to one board -- boards.toml entries can share a variant.
 
-[rock5]
-# images/rock5/ is this variant's directory; "immutable-sbc-rock5" is
-# its package name.
-suffix = "rock5"
-description = "RK3588(S)-family boards needing the AIC8800 Wi-Fi/BT combo-chip driver"
+[rk3588]
+suffix = "rk3588"
+description = "RK3588(S)-family boards: AIC8800 Wi-Fi/BT driver, mesa-libTeflon NPU delegate"
+
+[rpi]
+suffix = "rpi"
+description = "Raspberry Pi boards -- Wi-Fi/BT and GPU are upstream, no NPU (CPU-only inference)"
