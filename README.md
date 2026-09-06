@@ -70,6 +70,20 @@ for the full story (this was tightened twice after real-hardware testing
 turned up two separate ways bare/upstream-owned files were getting
 dropped before ever reaching a deployed board).
 
+The RK3588(S) NPU (`accel/rocket` in Mesa/the kernel) is wired in
+upstream `rk3588-base.dtsi` -- real register addresses, clocks,
+power-domains, all three cores -- but shipped `status = "disabled"` on
+the RK3588S boards specifically (confirmed on real hardware: the module
+loads, but `/dev/accel/` stays empty since nothing ever binds to it).
+[`images/rock5/build_files/20-npu-devicetree.sh`](images/rock5/build_files/20-npu-devicetree.sh)
+patches the kernel package's own compiled `.dtb` files directly
+(`fdtput`, by node path, not a recompile from source) to flip that
+status to `okay` on every `rock-5*` board's dtb -- a no-op on the
+full-RK3588 boards, which already enable it upstream. Requires a kernel
+new enough to ship the `rocket` driver at all (mainline since ~6.10);
+Mesa's userspace side (`mesa-libTeflon`, the TensorFlow Lite delegate)
+is a separate, currently-unaddressed piece.
+
 **A container image** on `ghcr.io/lukemech/immutable-sbc-rock5`, rebuilt
 on every push to `main`, plus a biweekly schedule (`build.yml`) as a
 fallback for quiet periods with no pushes. Once installed, `bootc upgrade`
