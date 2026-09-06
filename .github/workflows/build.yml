@@ -3,13 +3,9 @@ name: Build container image
 # (via uses:, not a separate trigger).
 on:
   pull_request:
-    branches:
-      - main
   schedule:
     - cron: '0 10 1,15 * *'  # ~every 2 weeks: 10:00 UTC on the 1st and 15th, as a fallback for quiet periods with no pushes
   push:
-    branches:
-      - main
     paths-ignore:
       - '**/README.md'
   workflow_dispatch:
@@ -98,6 +94,29 @@ jobs:
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
 
+      # Any push or manual dispatch on a branch other than default (pull_request and
+      # schedule never land here: a PR's ref is a merge ref, not a branch head, and
+      # schedule only ever runs on the default branch): push is still allowed (below),
+      # but under a distinct testing-<branch> tag, never the real latest/dated tags --
+      # and never creates a release or triggers build-flash (published marker stays
+      # unset for this case, further down).
+      - name: Compute test-branch mode
+        id: test-mode
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" != "pull_request" \
+                && "${{ github.ref }}" != "refs/heads/${{ github.event.repository.default_branch }}" ]]; then
+            # Not `echo | tr` -- echo's own trailing newline isn't alphanumeric either,
+            # so tr -c converts it into a literal trailing '-' that survives $()'s
+            # newline-stripping (it's not a newline by then). Confirmed on a real push:
+            # tag came out "testing-collabora-kernel-". printf never adds that newline.
+            BRANCH_SLUG=$(printf '%s' "${{ github.ref_name }}" | tr -c 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z')
+            echo "test_mode=true" >> "$GITHUB_OUTPUT"
+            echo "DEFAULT_TAG=testing-${BRANCH_SLUG}" >> "$GITHUB_ENV"
+          else
+            echo "test_mode=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # This actually builds the container image
       - name: Build Image
         id: build-image
@@ -111,7 +130,7 @@ jobs:
       # past this point (never on a PR or off the default branch).
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: github.event_name != 'pull_request' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || steps.test-mode.outputs.test_mode == 'true')
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -205,13 +224,21 @@ jobs:
             "${ALIAS_TAGS}"
 
       - name: Push To GHCR
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
+        if: github.event_name != 'pull_request' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || steps.test-mode.outputs.test_mode == 'true') && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
         id: push-image
         env:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
+          TEST_MODE: ${{ steps.test-mode.outputs.test_mode }}
         run: |
           set -euox pipefail
           for tag in ${ALIAS_TAGS}; do
+            # generate-build-tags also emits bare <date>/<date>-<sha> aliases meant for
+            # the real default-branch pipeline -- a same-day test-branch push would
+            # otherwise silently overwrite those. Only the testing-<branch>-prefixed
+            # ones (DEFAULT_TAG was overridden to that above) are safe to push here.
+            if [[ "${TEST_MODE}" == "true" && "${tag}" != testing-* ]]; then
+              continue
+            fi
             podman push --digestfile=/tmp/digestfile ${IMAGE_NAME}:${tag} ${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}
           done
 
@@ -219,22 +246,27 @@ jobs:
 
           echo "digest=${digest}" >> $GITHUB_OUTPUT
 
-      # Marks this variant as published this run -- release-meta/build-flash
-      # stay skipped (via aggregate below) if no variant uploads one.
+      # Marks this variant as published this run -- release-meta/build-flash stay
+      # skipped (via aggregate below) if no variant uploads one. Never for a test-branch
+      # dispatch: that pushes a testing-<branch> image tag only, not a real release.
       - name: Upload published marker
-        if: steps.push-image.outcome == 'success'
+        if: steps.push-image.outcome == 'success' && steps.test-mode.outputs.test_mode != 'true'
         run: touch published.marker
 
       - name: Upload published marker artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: steps.push-image.outcome == 'success'
+        if: steps.push-image.outcome == 'success' && steps.test-mode.outputs.test_mode != 'true'
         with:
           name: published-${{ matrix.variant }}
           path: published.marker
           retention-days: 1
 
-      # Image signing with cosign/sigstore. See README.md#image-signing for
-      # what to add as the SIGNING_SECRET repo secret.
+      # Image signing with cosign/sigstore. See README.md#image-signing for what to add
+      # as the SIGNING_SECRET repo secret. Not skipped for a test-branch dispatch, even
+      # though that image is a throwaway -- a deployed bootc system's policy requires a
+      # valid signature on anything it pulls regardless of tag, confirmed the hard way:
+      # `bootc switch` to an unsigned testing-* tag failed outright ("a signature was
+      # required, but no signature exists").
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         if: steps.push-image.outcome == 'success'

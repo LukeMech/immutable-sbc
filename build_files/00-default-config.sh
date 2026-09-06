@@ -15,7 +15,7 @@ sed -i '/^\[main\]/a install_weak_deps=False' /etc/dnf/dnf.conf
 # Named as the real package (dnf5-plugins), not the 'dnf5-command(copr)' virtual
 # capability it provides -- removing by that capability string later silently
 # matched nothing, leaving dnf5-plugins installed in the final image regardless.
-dnf5 -y install dnf5-plugins
+dnf5 -y install dnf5-plugins rpm-build
 dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-gpg-keys
 
 ### Grow root on first boot
