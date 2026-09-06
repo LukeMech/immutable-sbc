@@ -263,7 +263,9 @@ compose_fat() {
     # no loop mount needed.
     local mtools_img="${output_img}@@${offset_bytes}"
 
-    local tmp_extract
+    # Not `local`: the EXIT trap below fires at the *script's* real exit, after this
+    # function has already returned and any local would be out of scope (confirmed:
+    # "tmp_extract: unbound variable" under set -u).
     tmp_extract=$(mktemp -d)
     trap 'rm -rf "${tmp_extract}"' EXIT
     unzip -q "${firmware_zip}" -d "${tmp_extract}"
