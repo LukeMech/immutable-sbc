@@ -35,7 +35,9 @@ case "${VARIANT}" in
         # building hailo_platform's pybind11 extension needs Python.h, which the shared
         # 10-prepare-npu-run-module.sh's plain python3/pip/numpy/pillow install doesn't
         # pull in. Not cmake: those hooks vendor their own pinned build instead of using
-        # Fedora's, see their own comments for why.
-        dnf5 -y install gcc-c++ git python3-devel
+        # Fedora's, see their own comments for why. patchelf is 30-hailo-npu-run.sh's own
+        # -- see its comment for why the RPATH has to be fixed up after the fact instead
+        # of through CMake.
+        dnf5 -y install gcc-c++ git python3-devel patchelf
         ;;
 esac
