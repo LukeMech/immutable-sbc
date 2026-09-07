@@ -28,7 +28,7 @@ case "${VARIANT}" in
         # Nothing to remove -- see 00-pre-build.sh's matching case.
         ;;
     rpi)
-        dnf5 -y remove gcc-c++ git
+        dnf5 -y remove gcc-c++ git python3-devel
         ;;
 esac
 

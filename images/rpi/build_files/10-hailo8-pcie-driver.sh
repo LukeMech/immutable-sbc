@@ -9,10 +9,11 @@ set -ouex pipefail
 # self-contained "kmod-hailo8-pci" rpm, same reasoning as kmod-aic8800-usb: no bare files,
 # no runtime dependency on build-time-only packages surviving into the image.
 #
-# Driver + firmware only. Nothing else in this image can use the chip yet: Hailo has no
-# standard TFLite delegate (confirmed -- there's an open upstream request for one, still
-# unresolved), so npu-run can't drive it, and HailoRT (the userspace runtime that could)
-# isn't installed here. This just gets /dev/hailo_chardev to exist when a HAT is attached.
+# Driver + firmware only -- this just gets /dev/hailo_chardev to exist when a HAT is
+# attached. The userspace side (HailoRT, npu-run's Hailo backend) lives in
+# 20-hailort-hailo8.sh / 30-hailo-npu-run.sh instead: Hailo has no standard TFLite
+# delegate (confirmed -- there's an open upstream request for one, still unresolved),
+# so npu-run drives it through HailoRT's own Python API instead of --delegate.
 
 . /ctx/versions.env
 DRIVER_VERSION="${HAILO8_DRIVER_VERSION}"

@@ -31,8 +31,11 @@ case "${VARIANT}" in
     rpi)
         # HailoRT's build (images/rpi/build_files/20-/21-hailort-*.sh) -- gcc-c++ for
         # the C++ library itself, git for FetchContent's git-clone of its bundled deps
-        # (protobuf, spdlog, cli11, ...). Not cmake: those hooks vendor their own
-        # pinned build instead of using Fedora's, see their own comments for why.
-        dnf5 -y install gcc-c++ git
+        # (protobuf, spdlog, cli11, ...). python3-devel is 30-hailo-npu-run.sh's own --
+        # building hailo_platform's pybind11 extension needs Python.h, which the shared
+        # 10-prepare-npu-run-module.sh's plain python3/pip/numpy/pillow install doesn't
+        # pull in. Not cmake: those hooks vendor their own pinned build instead of using
+        # Fedora's, see their own comments for why.
+        dnf5 -y install gcc-c++ git python3-devel
         ;;
 esac

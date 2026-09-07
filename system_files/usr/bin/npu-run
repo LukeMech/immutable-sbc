@@ -1,35 +1,63 @@
 #!/usr/lib/npu-run/venv/bin/python3
-"""Runs a COCO object-detection model through whatever /dev/accel/accel* NPU is
-present -- the RK3588(S)'s accel/rocket + mesa-libTeflon by default, but --delegate
-takes any TFLite external-delegate .so, and detection at startup reports whatever
-kernel driver/delegate it actually finds rather than assuming rocket/Teflon. Falls
-back to CPU-only, no error, if the default delegate isn't installed (e.g. on a
-board with no NPU support at all). Pass --check to also run the same model on
-CPU and compare (skipped if there's no delegate), or --benchmark N to measure
-sustained throughput (FPS) instead of a single-shot run -- by default CPU and NPU
-benchmark concurrently (measuring them under mutual contention, closer to a real
-mixed workload); --isolate runs them one after another instead, for a clean
-per-backend number.
+"""Runs a COCO object-detection model through whatever accelerator is actually attached
+-- auto-detects the RK3588(S) NPU (accel/rocket + mesa-libTeflon), a Coral Edge TPU
+(USB or PCIe/M.2), and a Hailo-8/8L or Hailo-10H/15 HAT (rpi only), lists whatever it
+finds and prompts which one to use (always including plain CPU). -y skips the prompt
+and takes whichever is listed first (the best backend actually detected, or CPU if
+nothing was). Falls back to CPU-only with no error if nothing is attached at all.
+
+Coral and rockchip both run through a TFLite external delegate (--delegate overrides
+the one npu-run picked, same mechanism either way). Hailo has no TFLite delegate at
+all (confirmed -- there's an open upstream request for one, still unresolved), so it
+runs a separate, Hailo-only demo model (a hailo_model_zoo-precompiled SSD MobileNetV1
+.hef, see images/rpi/build_files/30-hailo-npu-run.sh) through HailoRT's own Python API
+instead, via a subprocess into that chip's isolated venv -- --model/--labels are
+ignored for it, there's no way to point it at an arbitrary .tflite/.hef pair through
+this CLI's own --model/--labels flags.
+
+Pass --check to also run on CPU and compare (skipped if the selected backend already
+is CPU), or --benchmark N to measure sustained throughput (FPS) instead of a
+single-shot run -- by default CPU and the selected backend benchmark concurrently
+(measuring them under mutual contention, closer to a real mixed workload); --isolate
+runs them one after another instead, for a clean per-backend number.
 
 Default model/labels/image are installed under /usr/share/npu-run by
 build_files/10-prepare-npu-run-module.sh; pass your own via --model, --labels
-and --image to try a different picture or detector.
+and --image to try a different picture or detector (rockchip/Coral only, see above).
 """
 
 import argparse
 import glob
+import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 ACCEL_GLOB = "/dev/accel/accel*"
+CORAL_APEX_GLOB = "/dev/apex_*"
+# Coral USB Accelerator's two known VID:PID pairs -- uninitialized (before libedgetpu's
+# firmware upload) and initialized (after), both need to be recognized as "a Coral is
+# attached" since which one shows up depends on whether anything's already used it.
+CORAL_USB_IDS = {("1a6e", "089a"), ("18d1", "9302")}
+HAILO8_DEV_GLOB = "/dev/hailo[0-9]*"
+HAILO1X_DEV_GLOB = "/dev/h1x-*"
+
 DEMO_DIR = "/usr/share/npu-run"
 DEFAULT_MODEL = os.path.join(DEMO_DIR, "detect.tflite")
 DEFAULT_LABELS = os.path.join(DEMO_DIR, "labelmap.txt")
 DEFAULT_IMAGE = os.path.join(DEMO_DIR, "test.jpg")
-DEFAULT_DELEGATE = "/usr/lib64/libteflon.so"
+ROCKCHIP_DELEGATE = "/usr/lib64/libteflon.so"
+CORAL_DELEGATE = "/usr/lib64/libedgetpu.so.1"
+
+HAILO_DEMO_DIR = os.path.join(DEMO_DIR, "hailo")
+HAILO_LABELS = os.path.join(HAILO_DEMO_DIR, "coco.txt")
+HAILO_INFER_SCRIPT = "/usr/lib/npu-run/hailo_infer.py"
+HAILO8_HEF = os.path.join(HAILO_DEMO_DIR, "ssd_mobilenet_v1_hailo8.hef")
+HAILO1X_HEF = os.path.join(HAILO_DEMO_DIR, "ssd_mobilenet_v1_hailo10h.hef")
+
 # Keyed by uid: rerunning as a different user (e.g. plain then sudo) must not
 # collide with a file an earlier run already owns.
 DEFAULT_OUTPUT_IMAGE = f"/tmp/npu-run-output-{os.getuid()}.jpg"
@@ -37,12 +65,19 @@ SINGLE_SHOT_ITERATIONS = 10
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-i", "--image", default=DEFAULT_IMAGE, help="image to run detection on")
-    parser.add_argument("-m", "--model", default=DEFAULT_MODEL, help="TFLite detection model")
-    parser.add_argument("-l", "--labels", default=DEFAULT_LABELS, help="labelmap.txt matching --model")
     parser.add_argument(
-        "-d", "--delegate", default=DEFAULT_DELEGATE, help="TFLite external delegate .so (Teflon by default)"
+        "-m", "--model", default=DEFAULT_MODEL, help="TFLite detection model (rockchip/Coral only)"
+    )
+    parser.add_argument(
+        "-l", "--labels", default=DEFAULT_LABELS, help="labelmap.txt matching --model (rockchip/Coral only)"
+    )
+    parser.add_argument(
+        "-d",
+        "--delegate",
+        default=None,
+        help="TFLite external delegate .so, overriding whichever backend was selected",
     )
     parser.add_argument(
         "-o", "--output", default=DEFAULT_OUTPUT_IMAGE, help="where to save the annotated image"
@@ -59,7 +94,10 @@ def parse_args():
         "-s", "--score-threshold", type=float, default=0.4, help="minimum confidence to report (0-1)"
     )
     parser.add_argument(
-        "-c", "--check", action="store_true", help="also run on CPU (no delegate) and compare against NPU"
+        "-y", "--yes", action="store_true", help="skip the backend prompt, use whichever is listed first"
+    )
+    parser.add_argument(
+        "-c", "--check", action="store_true", help="also run on CPU (no delegate) and compare against the selected backend"
     )
     parser.add_argument(
         "-b",
@@ -67,14 +105,14 @@ def parse_args():
         type=int,
         metavar="N",
         help="run N inferences per backend in a loop and report throughput (FPS) "
-        "instead of a single-shot run; always compares CPU vs NPU",
+        "instead of a single-shot run; always compares CPU vs the selected backend",
     )
     parser.add_argument(
         "-I",
         "--isolate",
         action="store_true",
-        help="with --benchmark, run CPU then NPU one after another instead of "
-        "concurrently (the default)",
+        help="with --benchmark, run CPU then the selected backend one after another "
+        "instead of concurrently (the default)",
     )
     return parser.parse_args()
 
@@ -107,43 +145,123 @@ def accel_driver(dev_path):
     return None
 
 
-def check_accel(delegate_path):
-    print("== NPU/accel detection ==")
-    devices = sorted(glob.glob(ACCEL_GLOB))
-    if not devices:
-        print(f"{ACCEL_GLOB}: none present")
-    drivers = set()
-    for dev in devices:
-        driver = accel_driver(dev)
-        if driver:
-            drivers.add(driver)
-        print(f"{dev}: present (kernel driver: {driver or 'unknown'})")
+def usb_device_ids():
+    """(idVendor, idProduct) for every enumerated USB device, read from sysfs --
+    avoids depending on lsusb (not installed here)."""
+    ids = set()
+    for uevent_path in glob.glob("/sys/bus/usb/devices/*/uevent"):
+        device_dir = os.path.dirname(uevent_path)
+        try:
+            with open(os.path.join(device_dir, "idVendor")) as f:
+                vendor = f.read().strip()
+            with open(os.path.join(device_dir, "idProduct")) as f:
+                product = f.read().strip()
+        except OSError:
+            continue
+        ids.add((vendor, product))
+    return ids
 
-    delegate_exists = os.path.exists(delegate_path)
-    if delegate_exists:
-        owner = subprocess.run(
-            ["rpm", "-qf", delegate_path], capture_output=True, text=True, check=False
-        ).stdout.strip()
-        print(f"delegate: {delegate_path} ({owner or 'not rpm-owned'})")
-    else:
-        print(f"delegate: {delegate_path} MISSING -- falling back to CPU-only")
 
-    result = subprocess.run(["dmesg"], capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        print(
-            f"dmesg: couldn't read the kernel log ({result.stderr.strip() or 'permission denied'}) "
-            "-- Fedora restricts it to root by default (kernel.dmesg_restrict), rerun with sudo"
+def hailo_prefix(symlink_name):
+    """Resolves /usr/bin/hailortcli-hailo8 (or -hailo1x)'s real target back to that
+    chip's isolated /opt/hailort-<version> prefix -- not hardcoding the version here,
+    since that's a build-time pin (versions.env) this script has no access to and
+    shouldn't have to track separately. Returns None if the symlink doesn't exist
+    (rk3588, or a rpi image predating this hook)."""
+    symlink = f"/usr/bin/{symlink_name}"
+    if not os.path.islink(symlink):
+        return None
+    target = os.path.realpath(symlink)  # .../opt/hailort-<version>/bin/hailortcli
+    prefix = os.path.dirname(os.path.dirname(target))
+    return prefix if os.path.isdir(prefix) else None
+
+
+def detect_backends():
+    """Every backend actually usable right now, in priority order (best-suited to
+    this hardware first), CPU always last. Each entry: id, label, kind ("tflite",
+    "hailo" or "cpu"), plus kind-specific fields (tflite: delegate; hailo: python,
+    hef, labels)."""
+    backends = []
+
+    accel_devices = sorted(glob.glob(ACCEL_GLOB))
+    if accel_devices and os.path.exists(ROCKCHIP_DELEGATE):
+        driver = accel_driver(accel_devices[0]) or "unknown"
+        backends.append(
+            {
+                "id": "rockchip",
+                "label": f"Rockchip NPU ({accel_devices[0]}, driver: {driver}, via Teflon)",
+                "kind": "tflite",
+                "delegate": ROCKCHIP_DELEGATE,
+            }
         )
-    elif drivers:
-        hits = [line for line in result.stdout.splitlines() if any(d.lower() in line.lower() for d in drivers)]
-        if hits:
-            print(f"dmesg ({', '.join(sorted(drivers))}):")
-            for line in hits[-5:]:
-                print(f"  {line}")
-        else:
-            print(f"dmesg: no messages from {', '.join(sorted(drivers))} (buffer may have rotated since boot)")
+
+    coral_present = bool(glob.glob(CORAL_APEX_GLOB)) or bool(usb_device_ids() & CORAL_USB_IDS)
+    if coral_present and os.path.exists(CORAL_DELEGATE):
+        backends.append(
+            {
+                "id": "coral",
+                "label": "Coral Edge TPU (via libedgetpu)",
+                "kind": "tflite",
+                "delegate": CORAL_DELEGATE,
+            }
+        )
+
+    hailo8_prefix = hailo_prefix("hailortcli-hailo8")
+    if glob.glob(HAILO8_DEV_GLOB) and hailo8_prefix and os.path.exists(HAILO8_HEF):
+        backends.append(
+            {
+                "id": "hailo8",
+                "label": "Hailo-8/8L (via HailoRT)",
+                "kind": "hailo",
+                "python": os.path.join(hailo8_prefix, "pyvenv", "bin", "python3"),
+                "hef": HAILO8_HEF,
+                "labels": HAILO_LABELS,
+            }
+        )
+
+    hailo1x_prefix = hailo_prefix("hailortcli-hailo1x")
+    if glob.glob(HAILO1X_DEV_GLOB) and hailo1x_prefix and os.path.exists(HAILO1X_HEF):
+        backends.append(
+            {
+                "id": "hailo10h",
+                "label": "Hailo-10H/15 (via HailoRT)",
+                "kind": "hailo",
+                "python": os.path.join(hailo1x_prefix, "pyvenv", "bin", "python3"),
+                "hef": HAILO1X_HEF,
+                "labels": HAILO_LABELS,
+            }
+        )
+
+    backends.append({"id": "cpu", "label": "CPU only (no accelerator)", "kind": "cpu"})
+    return backends
+
+
+def choose_backend(backends, auto_yes):
+    print("== Accelerator detection ==")
+    for i, backend in enumerate(backends):
+        print(f"  [{i}] {backend['label']}")
     print()
-    return delegate_exists
+
+    if auto_yes:
+        print(f"-y: using [0] {backends[0]['label']}\n")
+        return backends[0]
+
+    try:
+        choice = input("Select backend to use [0]: ").strip()
+    except EOFError:
+        choice = ""
+    if not choice:
+        index = 0
+    else:
+        try:
+            index = int(choice)
+        except ValueError:
+            index = -1
+        if not (0 <= index < len(backends)):
+            print(f"error: '{choice}' isn't one of the listed options", file=sys.stderr)
+            sys.exit(1)
+    print()
+    return backends[index]
 
 
 def load_labels(path):
@@ -161,7 +279,7 @@ def run_inference(interpreter, input_details, input_data, iterations):
     return (time.time() - start) / iterations
 
 
-def detect(delegate_path, args, iterations):
+def detect_tflite(delegate_path, args, iterations):
     from ai_edge_litert.interpreter import Interpreter, load_delegate
     import numpy as np
     from PIL import Image
@@ -204,6 +322,38 @@ def detect(delegate_path, args, iterations):
     return elapsed_s, detections, image
 
 
+def detect_hailo(backend, args, iterations):
+    from PIL import Image
+
+    with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+        subprocess.run(
+            [
+                backend["python"],
+                HAILO_INFER_SCRIPT,
+                "--hef", backend["hef"],
+                "--image", args.image,
+                "--labels", backend["labels"],
+                "--score-threshold", str(args.score_threshold),
+                "--iterations", str(iterations),
+                "--output-json", tmp.name,
+            ],
+            check=True,
+        )
+        with open(tmp.name) as f:
+            result = json.load(f)
+
+    image = Image.open(args.image).convert("RGB")
+    return result["elapsed_s"], result["detections"], image
+
+
+def run_backend(backend, args, iterations):
+    if backend["kind"] == "cpu":
+        return detect_tflite(None, args, iterations)
+    if backend["kind"] == "hailo":
+        return detect_hailo(backend, args, iterations)
+    return detect_tflite(backend["delegate"], args, iterations)
+
+
 def report(title, elapsed_s, detections, score_threshold):
     print(f"== {title} ==")
     if detections:
@@ -236,86 +386,94 @@ def save_annotated(image, detections, output_path):
     print(f"Annotated image saved to {output_path}")
 
 
-def run_npu_only(args, delegate_exists):
-    if not delegate_exists:
-        cpu_s, cpu_detections, image = detect(None, args, SINGLE_SHOT_ITERATIONS)
+def run_npu_only(backend, args):
+    if backend["kind"] == "cpu":
+        cpu_s, cpu_detections, image = run_backend(backend, args, SINGLE_SHOT_ITERATIONS)
         report("CPU-only inference (no delegate)", cpu_s, cpu_detections, args.score_threshold)
         save_annotated(image, cpu_detections, args.output)
         return
-    npu_label = f"NPU-accelerated inference (via {os.path.basename(args.delegate)})"
+    label = f"{backend['label']} inference"
     try:
-        npu_s, npu_detections, image = detect(args.delegate, args, SINGLE_SHOT_ITERATIONS)
+        elapsed_s, detections, image = run_backend(backend, args, SINGLE_SHOT_ITERATIONS)
     except Exception as e:
-        print(f"== {npu_label} ==\n  FAILED: {e}")
+        print(f"== {label} ==\n  FAILED: {e}")
         sys.exit(1)
-    report(npu_label, npu_s, npu_detections, args.score_threshold)
-    save_annotated(image, npu_detections, args.output)
+    report(label, elapsed_s, detections, args.score_threshold)
+    save_annotated(image, detections, args.output)
 
 
-def run_check(args, delegate_exists):
-    cpu_s, cpu_detections, image = detect(None, args, SINGLE_SHOT_ITERATIONS)
+def run_check(backend, args):
+    cpu_s, cpu_detections, image = detect_tflite(None, args, SINGLE_SHOT_ITERATIONS)
     report("CPU-only inference (no delegate)", cpu_s, cpu_detections, args.score_threshold)
-    if not delegate_exists:
+    if backend["kind"] == "cpu":
         save_annotated(image, cpu_detections, args.output)
         return
 
-    npu_label = f"NPU-accelerated inference (via {os.path.basename(args.delegate)})"
+    label = f"{backend['label']} inference"
     try:
-        npu_s, npu_detections, image = detect(args.delegate, args, SINGLE_SHOT_ITERATIONS)
+        elapsed_s, detections, image = run_backend(backend, args, SINGLE_SHOT_ITERATIONS)
     except Exception as e:
-        print(f"== {npu_label} ==\n  FAILED: {e}")
+        print(f"== {label} ==\n  FAILED: {e}")
         sys.exit(1)
-    report(npu_label, npu_s, npu_detections, args.score_threshold)
+    report(label, elapsed_s, detections, args.score_threshold)
 
-    print(f"Speedup: {cpu_s / npu_s:.1f}x (CPU {cpu_s * 1000:.2f} ms vs NPU {npu_s * 1000:.2f} ms)")
-    save_annotated(image, npu_detections, args.output)
+    print(f"Speedup: {cpu_s / elapsed_s:.1f}x (CPU {cpu_s * 1000:.2f} ms vs {backend['label']} {elapsed_s * 1000:.2f} ms)")
+    save_annotated(image, detections, args.output)
 
 
-def run_benchmark(args, delegate_exists):
+def run_benchmark(backend, args):
     mode = "isolated" if args.isolate else "concurrent"
     print(f"== Benchmark: {args.benchmark} inferences per backend ({mode}) ==\n")
 
-    if not delegate_exists:
-        cpu_s, _, _ = detect(None, args, args.benchmark)
+    if backend["kind"] == "cpu":
+        cpu_s, _, _ = detect_tflite(None, args, args.benchmark)
         print(f"CPU-only: {1 / cpu_s:6.1f} FPS ({cpu_s * 1000:.2f} ms/inference)")
         return
 
-    npu_label = f"NPU (via {os.path.basename(args.delegate)})"
     if args.isolate:
-        cpu_s, _, _ = detect(None, args, args.benchmark)
+        cpu_s, _, _ = detect_tflite(None, args, args.benchmark)
         try:
-            npu_s, _, _ = detect(args.delegate, args, args.benchmark)
+            other_s, _, _ = run_backend(backend, args, args.benchmark)
         except Exception as e:
-            print(f"{npu_label}: FAILED: {e}")
+            print(f"{backend['label']}: FAILED: {e}")
             sys.exit(1)
     else:
         # Both run in real threads (not sequentially) since the actual inference
-        # work -- native CPU kernels and the NPU delegate's ioctls alike --
-        # releases the GIL, so this genuinely exercises CPU and NPU at once.
+        # work -- native CPU kernels, the TFLite delegate's ioctls, and the Hailo
+        # subprocess's own wait() alike -- releases the GIL, so this genuinely
+        # exercises CPU and the other backend at once.
         with ThreadPoolExecutor(max_workers=2) as pool:
-            cpu_future = pool.submit(detect, None, args, args.benchmark)
-            npu_future = pool.submit(detect, args.delegate, args, args.benchmark)
+            cpu_future = pool.submit(detect_tflite, None, args, args.benchmark)
+            other_future = pool.submit(run_backend, backend, args, args.benchmark)
             cpu_s = cpu_future.result()[0]
             try:
-                npu_s = npu_future.result()[0]
+                other_s = other_future.result()[0]
             except Exception as e:
-                print(f"{npu_label}: FAILED: {e}")
+                print(f"{backend['label']}: FAILED: {e}")
                 sys.exit(1)
 
     print(f"CPU-only: {1 / cpu_s:6.1f} FPS ({cpu_s * 1000:.2f} ms/inference)")
-    print(f"{npu_label}: {1 / npu_s:6.1f} FPS ({npu_s * 1000:.2f} ms/inference)")
-    print(f"\nSpeedup: {cpu_s / npu_s:.1f}x")
+    print(f"{backend['label']}: {1 / other_s:6.1f} FPS ({other_s * 1000:.2f} ms/inference)")
+    print(f"\nSpeedup: {cpu_s / other_s:.1f}x")
 
 
 def main():
     args = parse_args()
-    delegate_exists = check_accel(args.delegate)
-    if args.benchmark:
-        run_benchmark(args, delegate_exists)
-    elif args.check:
-        run_check(args, delegate_exists)
+
+    if args.delegate:
+        # Explicit --delegate always wins over detection/prompting entirely --
+        # matches this flag's old, pre-multi-backend behavior exactly.
+        backend = {"id": "delegate", "label": f"delegate ({os.path.basename(args.delegate)})", "kind": "tflite", "delegate": args.delegate}
     else:
-        run_npu_only(args, delegate_exists)
+        backends = detect_backends()
+        backend = choose_backend(backends, args.yes)
+
+    if args.benchmark:
+        run_benchmark(backend, args)
+    elif args.check:
+        run_check(backend, args)
+    else:
+        run_npu_only(backend, args)
 
 
 if __name__ == "__main__":
