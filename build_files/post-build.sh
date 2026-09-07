@@ -35,5 +35,13 @@ esac
 KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
 dnf5 -y remove "kernel-devel-${KVER}" gcc make binutils dnf5-plugins terra-release terra-gpg-keys rpm-build
 
+# nfs-utils comes from the base fedora-bootc image, not anything installed above (no
+# package here Requires it -- checked). Its rpc.statd tries to init its state directory
+# at every boot and fails (confirmed: "Failed to create /var/lib/nfs/statd/.state.new:
+# No such file or directory"). This appliance never does a kernel-level NFS mount;
+# Nautilus's own NFS browsing goes through gvfs's userspace libnfs backend instead, so
+# just remove the package rather than mask its services around it.
+dnf5 -y remove nfs-utils
+
 # Final housekeeping
 dnf5 -y clean all

@@ -1,0 +1,7 @@
+# Skip Mission Center's own first-run flow on a freshly flashed image -- nethogs'
+# capabilities, the powercap udev rule and lm-sensors are already provisioned by
+# build_files/05-gnome-minimal.sh, not by Mission Center's own "Run Additional Setup"
+# (that path assumes a mutable /usr it can drop a helper systemd unit into, which
+# doesn't hold on this ostree/bootc system).
+[io/missioncenter/MissionCenter]
+first-time-running=false
