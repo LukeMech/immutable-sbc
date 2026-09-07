@@ -76,10 +76,15 @@ build_hailo_python_bindings() {
 
     # PATH: setup.py's own build_ext shells out to a bare `cmake` -- prepend our vendored
     # one so that resolves instead of failing outright (no system cmake package anymore).
+    # --ignore-requires-python: this package's own metadata declares Requires-Python
+    # <3.14,>=3.10 (confirmed in CI: "Package 'hailort' requires a different Python:
+    # 3.14.7 not in '<3.14,>=3.10'") -- a stale upper bound from before Fedora shipped
+    # 3.14, not a real incompatibility (pybind11 2.13.6, what this actually builds
+    # against, has no issue with 3.14).
     PATH="${CMAKE_BIN_DIR}:${PATH}" \
         LIBHAILORT_PATH="${prefix}/lib/libhailort.so" \
         HAILORT_INCLUDE_DIR="${prefix}/include" \
-        "${prefix}/pyvenv/bin/pip" install --no-cache-dir \
+        "${prefix}/pyvenv/bin/pip" install --no-cache-dir --ignore-requires-python \
         "${src_dir}/hailort/libhailort/bindings/python/platform"
 
     "${prefix}/pyvenv/bin/python3" -c "import hailo_platform" || {
