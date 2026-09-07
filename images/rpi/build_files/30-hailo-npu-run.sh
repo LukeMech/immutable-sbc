@@ -74,6 +74,24 @@ build_hailo_python_bindings() {
 
     python3 -m venv --system-site-packages "${prefix}/pyvenv"
 
+    # Upstream bug: the bindings' own CMakeLists.txt sets INSTALL_RPATH to
+    # $LIBHAILORT_PATH verbatim -- a full *file* path to libhailort.so, not the
+    # directory containing it, which is what RPATH actually has to be. Built fine
+    # regardless (that only needs the file path to link against), but the resulting
+    # _pyhailort*.so can't find libhailort.so.<version> at import time (confirmed in
+    # CI: "ImportError: libhailort.so.5.4.0: cannot open shared object file"). Fix it
+    # the same way we already fix protobuf.cmake's lib64 bug in 20-/21-hailort-*.sh --
+    # patch it before building rather than working around it with LD_LIBRARY_PATH,
+    # which we'd have to remember to also set at actual inference time in npu-run.
+    local bindings_cmake="${src_dir}/hailort/libhailort/bindings/python/src/CMakeLists.txt"
+    sed -i '/^    set_target_properties($/i\    get_filename_component(HAILORT_LIB_DIR "${LIBHAILORT_PATH}" DIRECTORY)' \
+        "${bindings_cmake}"
+    sed -i 's/INSTALL_RPATH "\${LIBHAILORT_PATH}"/INSTALL_RPATH "${HAILORT_LIB_DIR}"/' "${bindings_cmake}"
+    if ! grep -q 'INSTALL_RPATH "\${HAILORT_LIB_DIR}"' "${bindings_cmake}"; then
+        echo "error: bindings CMakeLists.txt RPATH patch didn't apply -- upstream file layout changed?" >&2
+        exit 1
+    fi
+
     # PATH: setup.py's own build_ext shells out to a bare `cmake` -- prepend our vendored
     # one so that resolves instead of failing outright (no system cmake package anymore).
     # --ignore-requires-python: this package's own metadata declares Requires-Python
