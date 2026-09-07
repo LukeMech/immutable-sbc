@@ -33,7 +33,15 @@ case "${VARIANT}" in
 esac
 
 KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
-dnf5 -y remove "kernel-devel-${KVER}" gcc make binutils dnf5-plugins terra-release terra-gpg-keys rpm-build
+# redhat-rpm-config named explicitly, not left for rpm-build's removal to orphan it
+# implicitly -- confirmed in CI (job 101774657383): `dnf5 remove` cascades multi-hop
+# orphans fine for packages named directly (gcc/binutils pulled bison, flex, elfutils,
+# gdb-minimal, ... down with them) but left redhat-rpm-config and its whole macros
+# chain (a hard Requires of rpm-build, pure build-time noarch macro defs -- nothing
+# here needs it at runtime) installed and shipping in the final image when it was only
+# an implicit dependency of rpm-build rather than named on the command line itself.
+dnf5 -y remove "kernel-devel-${KVER}" gcc make binutils dnf5-plugins terra-release terra-gpg-keys \
+    rpm-build redhat-rpm-config
 
 # nfs-utils comes from the base fedora-bootc image, not anything installed above (no
 # package here Requires it -- checked). Its rpc.statd tries to init its state directory
@@ -42,6 +50,10 @@ dnf5 -y remove "kernel-devel-${KVER}" gcc make binutils dnf5-plugins terra-relea
 # Nautilus's own NFS browsing goes through gvfs's userspace libnfs backend instead, so
 # just remove the package rather than mask its services around it.
 dnf5 -y remove nfs-utils
+
+# Belt-and-braces: catches anything the explicit removes above still left orphaned
+# (a no-op if they didn't).
+dnf5 -y autoremove
 
 # Final housekeeping
 dnf5 -y clean all
