@@ -22,3 +22,7 @@ A variant isn't tied to one board: multiple boards can share a variant with iden
 different disk layouts. Today there are two of each -- see [`rk3588/README.md`](rk3588/README.md) for the
 `rk3588` variant (flashed by the `rock-5c` board) and [`rpi/README.md`](rpi/README.md) for the `rpi` variant
 (flashed by `rpi-4b`/`rpi-5`) -- the top-level [README](../README.md) covers each board's flashing steps.
+
+[`deps/`](deps/) is neither a variant nor a board -- it's a side image (prebuilt kernel/kmod/HailoRT
+RPMs) the main build bind-mounts in, built and pushed on its own schedule by a separate workflow. See
+[`deps/README.md`](deps/README.md).

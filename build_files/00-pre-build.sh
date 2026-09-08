@@ -8,36 +8,73 @@ set -ouex pipefail
 # pulled in gnome-tour unasked.
 sed -i '/^\[main\]/a install_weak_deps=False' /etc/dnf/dnf.conf
 
-### Every build-time-only dependency any hook (shared or variant) needs, installed once
-# here instead of piecemeal per-hook. See post-build.sh for the matching removal (has
-# to happen after every hook, not from its own numbered position -- see build.sh), and
-# versions.env for the pinned sources these tools actually build.
+### Replace the base image's own floating kernel with the pinned one from
+# images/deps/ (published as ghcr.io/lukemech/immutable-sbc-deps, bind-mounted here
+# at /deps-rpms by the main Containerfile) -- every kmod rpm installed by a later
+# hook (aic8800/gasket/hailo8-pci/hailo1x-pci) was built in that same deps image
+# against this exact kernel version, so the two have to match, and the deps image is
+# what actually resolves/downloads Fedora's current kernel (see
+# images/deps/build_files/00-kernel.sh) rather than trusting whatever
+# fedora-bootc:44's own floating tag happens to have captured that week.
+#
+# This exact mechanism -- shim kernel-install.d, `rpm --erase --nodeps`, `dnf5
+# install` the pinned RPMs, `dnf5 versionlock add`, restore the hooks -- is
+# confirmed via ublue-os/bazzite and ublue-os/ucore (aarch64-shipping) as the
+# current, non-deprecated way to do this (the older `rpm-ostree override replace`
+# pattern is deprecated). Shimming avoids the install.d hooks trying to invoke
+# rpm-ostree/dracut mid-transaction -- there's no /run, no booted system, this is a
+# plain image build, not a real kernel update. The one real dracut run happens once
+# in post-build.sh, after every kmod is also installed -- not here.
+pushd /usr/lib/kernel/install.d
+mv 05-rpmostree.install 05-rpmostree.install.bak
+mv 50-dracut.install 50-dracut.install.bak
+printf '%s\n' '#!/bin/sh' 'exit 0' >05-rpmostree.install
+printf '%s\n' '#!/bin/sh' 'exit 0' >50-dracut.install
+chmod +x 05-rpmostree.install 50-dracut.install
+popd
 
-# Global: needed regardless of variant -- every out-of-tree kernel module build (this
-# variant's own driver hooks, plus the shared 11-coral-accelerator.sh's gasket module)
-# needs kernel-devel/gcc/make, and that same shared hook's libedgetpu .deb needs
-# binutils (for `ar`) to unpack.
-KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
-dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-gpg-keys
-dnf5 -y install "kernel-devel-${KVER}" gcc make binutils dnf5-plugins rpm-build
+for pkg in kernel kernel-core kernel-modules kernel-modules-core kernel-modules-extra; do
+    rpm -q "${pkg}" >/dev/null 2>&1 && rpm --erase "${pkg}" --nodeps
+done
+rm -rf /usr/lib/modules
 
-# Per-config: only what this specific variant's own hooks go on to need.
-case "${VARIANT}" in
-    rk3588)
-        # Nothing extra -- both this variant's own hooks (10-aic8800-wifi-bt.sh,
-        # 20-mesa-teflon.sh) build straight from a Kbuild tree or install a repo
-        # package, covered by the global kernel-devel/gcc/make above already.
-        ;;
-    rpi)
-        # HailoRT's build (images/rpi/build_files/20-/21-hailort-*.sh) -- gcc-c++ for
-        # the C++ library itself, git for FetchContent's git-clone of its bundled deps
-        # (protobuf, spdlog, cli11, ...). python3-devel is 30-hailo-npu-run.sh's own --
-        # building hailo_platform's pybind11 extension needs Python.h, which the shared
-        # 10-prepare-npu-run-module.sh's plain python3/pip/numpy/pillow install doesn't
-        # pull in. Not cmake: those hooks vendor their own pinned build instead of using
-        # Fedora's, see their own comments for why. patchelf is 30-hailo-npu-run.sh's own
-        # -- see its comment for why the RPATH has to be fixed up after the fact instead
-        # of through CMake.
-        dnf5 -y install gcc-c++ git python3-devel patchelf
-        ;;
-esac
+# Only the runtime kernel/modules -- NOT kernel-devel/kernel-devel-matched/
+# kernel-headers. Nothing compiles in this image any more (every out-of-tree kernel
+# module and the whole HailoRT/libedgetpu build now happen in images/deps/ instead,
+# installed elsewhere in this build as plain prebuilt rpms), so there's nothing here
+# that would ever need a kbuild tree or kernel headers -- installing them would just
+# be dead weight shipping in the final image for no reason.
+#
+# Globs, not exact NVRAs -- images/deps/build_files/00-kernel.sh resolves whatever
+# Fedora's current kernel is at ITS build time, so the exact version isn't known
+# here. kernel-modules-*.rpm also picks up kernel-modules-core/-extra (same prefix).
+dnf5 -y install \
+    /deps-rpms/kernel/kernel-[0-9]*.rpm \
+    /deps-rpms/kernel/kernel-core-*.rpm \
+    /deps-rpms/kernel/kernel-modules-*.rpm
+
+# Guards against some later hook's own `dnf5 install` silently pulling in a
+# different kernel as a transitive dependency and undoing the pin above.
+dnf5 versionlock add kernel kernel-core kernel-modules kernel-modules-core \
+    kernel-modules-extra
+
+pushd /usr/lib/kernel/install.d
+mv -f 05-rpmostree.install.bak 05-rpmostree.install
+mv -f 50-dracut.install.bak 50-dracut.install
+popd
+
+# Confirm the swap actually replaced the base image's kernel rather than somehow
+# ending up with both -- exactly one kernel-core installed, and it's the one this
+# image is pinned to.
+INSTALLED_KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
+KERNEL_CORE_COUNT=$(rpm -qa kernel-core | wc -l)
+if [[ "${KERNEL_CORE_COUNT}" -ne 1 ]]; then
+    echo "error: expected exactly one kernel-core installed after the swap, found ${KERNEL_CORE_COUNT}" >&2
+    rpm -qa 'kernel-core*' >&2
+    exit 1
+fi
+if [[ ! -d "/usr/lib/modules/${INSTALLED_KVER}" ]]; then
+    echo "error: /usr/lib/modules/${INSTALLED_KVER} missing after the kernel swap" >&2
+    exit 1
+fi
+echo "Kernel swap confirmed: running kernel-core is now ${INSTALLED_KVER}"

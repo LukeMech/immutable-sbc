@@ -1,0 +1,105 @@
+name: Build deps image
+# Prebuilt kernel + kmod + HailoRT RPMs the main build.yml bind-mounts in (images/deps/
+# Containerfile, ghcr.io/lukemech/immutable-sbc-deps) -- deliberately separate from
+# build.yml: this shouldn't rebuild on every main-image push, only when something here
+# actually changed, or on its own schedule (see below).
+
+on:
+  push:
+    paths:
+      - 'images/deps/**'
+      - '.github/workflows/build-deps.yml'
+  schedule:
+    # One day before build.yml's own biweekly cron (0 10 1,15 * *)
+    - cron: '0 10 14 * *'
+    - cron: '0 10 28 * *'
+  workflow_dispatch:
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}" # do not edit
+  IMAGE_NAME: immutable-sbc-deps
+  DEFAULT_TAG: latest
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build_push:
+    name: Build and push deps image
+    # aarch64-only project -- same reasoning as build.yml's build_push.
+    runs-on: ubuntu-26.04-arm
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Prepare environment
+        run: |
+          # Lowercase the image uri, same reason as build.yml's own Prepare environment step.
+          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> "${GITHUB_ENV}"
+          echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "${GITHUB_ENV}"
+
+      - name: Build deps image
+        run: |
+          # Context is the repo root, not images/deps -- its Containerfile reaches
+          # up to images/deps/versions.env, same as the main Containerfile's own ctx
+          # stage reaches into build_files/ and images/.
+          podman build --tag "${IMAGE_NAME}:${DEFAULT_TAG}" --file images/deps/Containerfile .
+
+      # Kernel is the only thing in this image that can change without a versions.env
+      # bump (see images/deps/build_files/00-kernel.sh) -- kmods/HailoRT are pinned, so
+      # a push-triggered run (versions.env or images/deps/ actually changed) always has
+      # something genuinely new to publish. A schedule-triggered run usually doesn't
+      # (Fedora's kernel doesn't move between every biweekly check), so only that case
+      # needs an actual check -- comparing the one-line /rpms/KVER marker (podman
+      # create + cp, not `podman run`: this image has no entrypoint to run at all) is
+      # enough, no need for scripts/diff-packages.sh's full rpm-db approach, which
+      # assumes an installed system this FROM-scratch image doesn't have.
+      - name: Check whether the kernel actually changed
+        if: github.event_name == 'schedule'
+        id: check-changes
+        run: |
+          set -euo pipefail
+
+          NEW_CID=$(podman create "${IMAGE_NAME}:${DEFAULT_TAG}")
+          podman cp "${NEW_CID}:/rpms/KVER" /tmp/new-kver.txt
+          podman rm -f "${NEW_CID}" >/dev/null
+          NEW_KVER=$(cat /tmp/new-kver.txt)
+
+          OLD_KVER=""
+          if podman pull --quiet "${IMAGE_REGISTRY}/${IMAGE_NAME}:${DEFAULT_TAG}" >/dev/null 2>&1; then
+            OLD_CID=$(podman create "${IMAGE_REGISTRY}/${IMAGE_NAME}:${DEFAULT_TAG}")
+            podman cp "${OLD_CID}:/rpms/KVER" /tmp/old-kver.txt 2>/dev/null || : >/tmp/old-kver.txt
+            podman rm -f "${OLD_CID}" >/dev/null
+            OLD_KVER=$(cat /tmp/old-kver.txt)
+          fi
+
+          echo "Previously published kernel: ${OLD_KVER:-<none>}"
+          echo "Freshly resolved kernel:     ${NEW_KVER}"
+
+          if [[ "${NEW_KVER}" == "${OLD_KVER}" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'schedule' || steps.check-changes.outputs.changed == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # No cosign/chunkah -- both are specifically about bootc's runtime pull/switch
+      # policy on the *bootable* images (README.md#image-signing); this image is never
+      # pulled by a booted bootc system, only bind-mounted at the main image's own
+      # build time, so that policy doesn't apply to it at all.
+      - name: Push to GHCR
+        if: github.event_name != 'schedule' || steps.check-changes.outputs.changed == 'true'
+        run: |
+          podman push "${IMAGE_NAME}:${DEFAULT_TAG}" "${IMAGE_REGISTRY}/${IMAGE_NAME}:${DEFAULT_TAG}"

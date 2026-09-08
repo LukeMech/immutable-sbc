@@ -10,7 +10,6 @@ set -ouex pipefail
 # every hook (shared and variant) has already run. The shared build_files/*.sh loop
 # finishes in full before the variant loop even starts, so a shared "99-"-style hook
 # picked up by that loop's own glob would still run before any variant hook, not after
-# (and those variant hooks are exactly the ones still needing kernel-devel/gcc-c++ etc.)
 # -- hence invoking this explicitly instead.
 #
 # `copr remove` (unlike `disable`) cleans up the .repo file and imported GPG key, and
@@ -23,25 +22,7 @@ for repo_file in /etc/yum.repos.d/_copr:*.repo; do
     dnf5 -y copr remove "${project}"
 done
 
-case "${VARIANT}" in
-    rk3588)
-        # Nothing to remove -- see 00-pre-build.sh's matching case.
-        ;;
-    rpi)
-        dnf5 -y remove gcc-c++ git python3-devel patchelf
-        ;;
-esac
-
 KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
-# redhat-rpm-config named explicitly, not left for rpm-build's removal to orphan it
-# implicitly -- confirmed in CI (job 101774657383): `dnf5 remove` cascades multi-hop
-# orphans fine for packages named directly (gcc/binutils pulled bison, flex, elfutils,
-# gdb-minimal, ... down with them) but left redhat-rpm-config and its whole macros
-# chain (a hard Requires of rpm-build, pure build-time noarch macro defs -- nothing
-# here needs it at runtime) installed and shipping in the final image when it was only
-# an implicit dependency of rpm-build rather than named on the command line itself.
-dnf5 -y remove "kernel-devel-${KVER}" gcc make binutils dnf5-plugins terra-release terra-gpg-keys \
-    rpm-build redhat-rpm-config
 
 # nfs-utils comes from the base fedora-bootc image, not anything installed above (no
 # package here Requires it -- checked). Its rpc.statd tries to init its state directory
@@ -54,6 +35,15 @@ dnf5 -y remove nfs-utils
 # Belt-and-braces: catches anything the explicit removes above still left orphaned
 # (a no-op if they didn't).
 dnf5 -y autoremove
+
+# One explicit initramfs rebuild, now that the kernel (00-pre-build.sh) and every
+# kmod (every hook above it) are already in their final state -- matches the
+# confirmed ublue-os/bazzite + ublue-os/ucore pattern of a single, final `dracut -f`
+# rather than letting it fire (or not, since it's shimmed off during the kernel
+# swap) once per package. --add ostree: required for an ostree/bootc root to boot at
+# all, not optional.
+dracut --no-hostonly --kver "${KVER}" --reproducible --add ostree -f \
+    "/usr/lib/modules/${KVER}/initramfs.img"
 
 # Final housekeeping
 dnf5 -y clean all

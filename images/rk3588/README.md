@@ -8,13 +8,14 @@ minimal, Wayland-only GNOME session: shell, settings, a file manager and a termi
 
 The onboard AIC8800D80 combo chip needs its Wi-Fi/BT kernel modules and firmware, built directly from
 [`radxa-pkg/aic8800`](https://github.com/radxa-pkg/aic8800)'s USB driver tree (pinned commit, see
-`versions.env`) once at container *build* time, not on the deployed read-only system -- no DKMS involved,
-even though upstream's own Debian packaging wraps this in one. Neither the kernel modules nor their firmware
-ship as bare files or depend on that source tree surviving into the final image -- both get pulled into one
-self-contained `kmod-aic8800-usb` rpm instead. See
-[`build_files/10-aic8800-wifi-bt.sh`](build_files/10-aic8800-wifi-bt.sh) for the full story (packaging this
-way was tightened twice already, after real-hardware testing found two ways bare/upstream-owned files were
-getting dropped).
+`images/deps/versions.env`) -- no DKMS involved, even though upstream's own Debian packaging wraps this in
+one. Neither the kernel modules nor their firmware ship as bare files or depend on that source tree
+surviving into any image -- both get pulled into one self-contained `kmod-aic8800-usb` rpm instead, built in
+[`images/deps/`](../deps/) (see [`images/deps/build_files/10-aic8800.sh`](../deps/build_files/10-aic8800.sh)
+for the full story -- packaging this way was tightened twice already, after real-hardware testing found two
+ways bare/upstream-owned files were getting dropped) and just installed here by
+[`build_files/10-aic8800-wifi-bt.sh`](build_files/10-aic8800-wifi-bt.sh). See
+[`images/deps/README.md`](../deps/README.md) for why the build itself lives there instead of in this image.
 
 [`build_files/20-mesa-teflon.sh`](build_files/20-mesa-teflon.sh) installs `mesa-libTeflon`, the TFLite
 delegate for the RK3588(S) NPU (`rocket` Gallium driver) -- Rockchip-specific, so it stays a board hook here

@@ -1,0 +1,25 @@
+# Build context is the repo ROOT (see .github/workflows/build-deps.yml's `podman
+# build --file images/deps/Containerfile .`), not images/deps/ -- needed to reach
+# build_files/versions.env, the same pinned driver/HailoRT sources the main image's
+# own hooks used to read before this build moved here.
+FROM scratch AS ctx
+COPY images/deps/build_files /
+COPY images/deps/versions.env /versions.env
+
+# Same base as the main Containerfile -- resolving/downloading/building against the
+# exact same Fedora release the main image builds on top of.
+FROM quay.io/fedora/fedora-bootc:44 AS builder
+
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build.sh
+
+# Published image is nothing but the built RPMs -- never installed/booted itself,
+# only bind-mounted by the main Containerfile at ITS build time. No signing needed:
+# kernel RPMs are already Fedora-signed and untouched, and nothing here is ever
+# pulled by a booted bootc system (bootc's runtime signature policy only applies to
+# images a deployed system actually pulls/switches to).
+FROM scratch
+COPY --from=builder /rpms /rpms
