@@ -47,6 +47,15 @@ dnf5 install -y \
 
 systemctl enable gdm.service NetworkManager.service bluetooth.service lm-sensors-detect.service
 
+# lm_sensors's own package ships /etc/sysconfig/lm_sensors already (%config(noreplace),
+# installed from its lm_sensors.sysconfig template) -- confirmed via its spec file. Left
+# in place, lm-sensors-detect.service's ConditionPathExists=!/etc/sysconfig/lm_sensors
+# (see that unit's own comment) would never be true, so sensors-detect --auto would
+# never actually run at first boot and this board would be stuck on the generic
+# packaged template instead of its own real, detected hardware. Remove it here so the
+# file only ever gets (re)created by real detection on the booted board.
+rm -f /etc/sysconfig/lm_sensors
+
 # Mission Center's "Enabling Additional Values" first-run dialog wants three things set up
 # (github.com/mission-center-devs/gng, platform-linux/bin/missioncenter-magpie-setup-linux):
 # nethogs with extra capabilities, a powercap udev rule (system_files/etc/udev/rules.d/

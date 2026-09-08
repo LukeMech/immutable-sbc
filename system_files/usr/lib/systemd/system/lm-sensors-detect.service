@@ -1,5 +1,19 @@
 [Unit]
 Description=Auto-detect lm_sensors hardware monitoring chips
+# Detected chips are a property of the board design, not something that changes
+# boot to boot on the same hardware -- and /etc is the one location bootc/ostree
+# treats as persistent, locally-mutable state, so once sensors-detect has written
+# this file it survives every future bootc upgrade untouched. Re-probing on every
+# single boot was both wasted work and the actual cause of a recurring failure:
+# lm_sensors.service's own ExecStart modprobes whatever EnvironmentFile=/etc/
+# sysconfig/lm_sensors lists -- the very file this service (re)generates -- and
+# with neither unit ordered against the other, systemd was free to start them in
+# parallel every boot, refailing lm_sensors.service whenever it won that race
+# (fixed only until the next reboot by manually re-running sensors-detect --auto).
+# Skipping once the file exists removes the race on every boot but the first;
+# Before= below still covers that one.
+ConditionPathExists=!/etc/sysconfig/lm_sensors
+Before=lm_sensors.service
 
 [Service]
 Type=oneshot
