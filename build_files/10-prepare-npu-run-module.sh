@@ -17,7 +17,7 @@ set -ouex pipefail
 # architecture -- something like EfficientDet or YOLO uses ops rocket doesn't
 # support yet, which would just silently fall back to CPU and defeat the demo.
 
-dnf5 -y install python3 python3-pip python3-numpy python3-pillow
+dnf5 -y install python3-numpy python3-pillow
 
 # ai-edge-litert is Google's actively maintained rename of tflite_runtime (which
 # never shipped aarch64 wheels) -- same Interpreter/load_delegate API. It's the
