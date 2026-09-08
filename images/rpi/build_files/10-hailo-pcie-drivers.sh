@@ -26,3 +26,14 @@ dnf5 -y install "${RPM_PATH}"
 
 # Fail the build rather than ship silently without the driver/firmware.
 rpm -q kmod-hailo8-pci
+
+RPM_1x_PATH=$(find /deps-rpms/kmods -iname 'kmod-hailo1x-pci-*.rpm' -print -quit)
+if [[ -z "${RPM_1x_PATH}" ]]; then
+    echo "error: kmod-hailo1x-pci-*.rpm not found under /deps-rpms/kmods" >&2
+    exit 1
+fi
+
+dnf5 -y install "${RPM_1x_PATH}"
+
+# Fail the build rather than ship silently without the driver/firmware.
+rpm -q kmod-hailo1x-pci
