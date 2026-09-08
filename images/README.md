@@ -11,7 +11,12 @@ Every OSTree/container image variant this repo builds lives here.
   more than a few fields plus maybe a firmware URL/checksum, so every board is just a table here rather
   than its own directory. Each board picks which variant to flash and declares its disk layout and firmware.
   `firmware_layout` picks how [`compose-sdcard-image.sh`](../scripts/compose-sdcard-image.sh) installs
-  firmware: `"raw"` (default, dd'd to a fixed disk offset) or `"fat"` (copied into the ESP).
+  firmware: `"raw"` (default, dd'd to a fixed disk offset) or `"fat"` (copied into the ESP). `dt_model` is
+  this table's one runtime-relevant field: a substring of `/proc/device-tree/model`, letting the deployed
+  `uefi-updater.timer` (every variant ships it, checking periodically rather than at boot -- a board
+  needing interactive Wi-Fi setup might not be online at boot at all) tell boards apart and apply the same
+  firmware update `compose-sdcard-image.sh` would have installed at flash time -- a no-op unless a board's
+  pinned `edk2_sha256` here has actually changed since it was last applied.
 
 A variant isn't tied to one board: multiple boards can share a variant with identical OS content but
 different disk layouts. Today there are two of each -- see [`rk3588/README.md`](rk3588/README.md) for the

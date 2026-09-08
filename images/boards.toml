@@ -10,6 +10,9 @@ variant = "rk3588"
 disk_config = "disk_config/disk.toml"
 edk2_url = "https://github.com/lukemech/edk2-rk3588/releases/download/v7.2/rock-5c_UEFI_Release_v7.2.img"
 edk2_sha256 = "26839a8bcb4aa08c32eca93ba70b9c2a9a0db35f8960e43c39b16015e8e9c078"
+# The deployed uefi-updater service's only way to tell boards apart at runtime --
+# mainline's rk3588s-rock-5c.dts sets model exactly to this string.
+dt_model = "Radxa ROCK 5C"
 
 [rpi-4b]
 board = "Raspberry Pi 4 Model B (BCM2711)"
@@ -24,6 +27,9 @@ disk_config = "disk_config/disk.toml"
 firmware_layout = "fat"
 edk2_url = "https://github.com/pftf/RPi4/releases/download/v1.53/RPi4_UEFI_Firmware_v1.53.zip"
 edk2_sha256 = "ca9973e2a7a546b3df871cfb7382e656829114b6dfa424f40dc67cc90a217d88"
+# bcm2711-rpi-4-b.dts's model, minus the "Rev 1.4"-style suffix the bootloader
+# appends at runtime -- substring match, see uefi-updater.py.
+dt_model = "Raspberry Pi 4"
 
 [rpi-5]
 board = "Raspberry Pi 5 (BCM2712)"
@@ -35,3 +41,4 @@ disk_config = "disk_config/disk.toml"
 firmware_layout = "fat"
 edk2_url = "https://github.com/worproject/rpi5-uefi/releases/download/v0.3/RPi5_UEFI_Release_v0.3.zip"
 edk2_sha256 = "2337df318845448ebcc8a6a587d15dccec44b54c665ece21250d2f6170732724"
+dt_model = "Raspberry Pi 5"

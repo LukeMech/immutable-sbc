@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for and apply an updated UEFI firmware image
+# Ordering hint for the timer's first tick, not the sole guarantee network is up --
+# see uefi-updater.timer for why this isn't wired into boot ordering directly.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/immutable-sbc/uefi-updater.py
+RemainAfterExit=yes

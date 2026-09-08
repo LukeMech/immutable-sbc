@@ -81,7 +81,7 @@ for the general shape of this repo -- `Containerfile` + `build_files/` +
 | Path | Purpose |
 |---|---|
 | [`images/README.md`](images/README.md) | What a variant vs. a board is, and how they relate -- start here before `boards.toml`/`variants.toml` |
-| [`images/boards.toml`](images/boards.toml) | Every physical board this repo flashes for -- one `[<board>]` table each: which variant it flashes, where its disk config lives, EDK2 firmware URL/sha256 |
+| [`images/boards.toml`](images/boards.toml) | Every physical board this repo flashes for -- one `[<board>]` table each: which variant it flashes, where its disk config lives, EDK2 firmware URL/sha256. Also shipped read-only into every image (`build_files/01-uefi-updater.sh`) -- `uefi-updater.timer` re-reads it periodically to keep a board's UEFI firmware current over OTA, the same way `bootc upgrade` keeps OS content current |
 | [`images/variants.toml`](images/variants.toml) | Every OSTree/container image variant this repo builds -- one `[<name>]` table each: its `suffix` (-> `images/<suffix>/` and the package name) and `description` |
 | [`images/rk3588/`](images/rk3588/) | The `rk3588` variant's own overlay: `build_files/` (aic8800 driver, mesa-libTeflon) -- see [`images/rk3588/README.md`](images/rk3588/README.md) |
 | [`images/rpi/`](images/rpi/) | The `rpi` variant's own overlay: `build_files/` (Hailo PCIe drivers, HailoRT and a Hailo `npu-run` backend for the optional AI HAT+ and AI HAT+ 2) -- see [`images/rpi/README.md`](images/rpi/README.md) |

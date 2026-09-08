@@ -5,6 +5,11 @@ COPY system_files /system_files
 # Whole images/ tree (not just the variant dir), bind-mounted and never persisted --
 # copying boards.toml too costs nothing; it's read later, by build-flash.yml.
 COPY images /images
+# fetch-firmware.sh: installed into the image by 15-uefi-updater.sh and reused
+# verbatim by the deployed uefi-updater.py service, so it downloads/verifies
+# firmware the exact same way build-flash.yml does -- one implementation, not
+# two copies to keep in sync.
+COPY scripts /scripts
 
 # Fedora bootc aarch64, generic across variants (driver/kernel needs go in
 # that variant's own images/<variant>/build_files/).

@@ -1,0 +1,18 @@
+[Unit]
+Description=Periodically check for and apply an updated UEFI firmware image
+
+[Timer]
+# 5min: gives the system a real chance to actually be online (DHCP/Wi-Fi association,
+# or -- on a board with no ethernet plugged in -- time for the user to connect Wi-Fi
+# themselves through GNOME's own network settings) before the first check, rather than
+# racing boot the way a plain WantedBy=multi-user.target service would.
+OnBootSec=5min
+# Retries on its own from here on, network-independent of any single boot -- covers a
+# board that's rarely rebooted, or one where Wi-Fi wasn't set up yet at the 5-minute
+# mark. uefi-updater.py is already a cheap no-op once the marker matches, so a daily
+# tick costs nothing on the (overwhelmingly common) already-up-to-date case.
+OnUnitActiveSec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target
