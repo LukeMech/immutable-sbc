@@ -2,6 +2,17 @@
 
 set -ouex pipefail
 
+
+# nfs-utils comes from the base fedora-bootc image, not anything installed above (no
+# package here Requires it -- checked). Its rpc.statd tries to init its state directory
+# at every boot and fails (confirmed: "Failed to create /var/lib/nfs/statd/.state.new:
+# No such file or directory"). This appliance never does a kernel-level NFS mount;
+# Nautilus's own NFS browsing goes through gvfs's userspace libnfs backend instead, so
+# just remove the package rather than mask its services around it.
+dnf5 -y remove nfs-utils
+
+dnf5 -y remove terra-release terra-gpg-keys
+
 ### Final cleanup: every COPR repo any hook enabled, every build-time-only dependency
 # 00-pre-build.sh installed, and the dnf cache -- all build-time-only convenience,
 # none of it should survive into the final image.
@@ -23,14 +34,6 @@ for repo_file in /etc/yum.repos.d/_copr:*.repo; do
 done
 
 KVER=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
-
-# nfs-utils comes from the base fedora-bootc image, not anything installed above (no
-# package here Requires it -- checked). Its rpc.statd tries to init its state directory
-# at every boot and fails (confirmed: "Failed to create /var/lib/nfs/statd/.state.new:
-# No such file or directory"). This appliance never does a kernel-level NFS mount;
-# Nautilus's own NFS browsing goes through gvfs's userspace libnfs backend instead, so
-# just remove the package rather than mask its services around it.
-dnf5 -y remove nfs-utils
 
 # Belt-and-braces: catches anything the explicit removes above still left orphaned
 # (a no-op if they didn't).

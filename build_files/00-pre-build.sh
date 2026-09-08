@@ -78,3 +78,8 @@ if [[ ! -d "/usr/lib/modules/${INSTALLED_KVER}" ]]; then
     exit 1
 fi
 echo "Kernel swap confirmed: running kernel-core is now ${INSTALLED_KVER}"
+
+# mission-center (below) isn't in Fedora's own repos -- it comes from Terra
+# (fyralabs), enabled here just for this install and removed again right after, since
+# nothing else in this image needs it.
+dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-gpg-keys
