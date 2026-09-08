@@ -1,0 +1,160 @@
+#!/usr/bin/bash
+### Clones the disk this system is currently booted from (the microSD card) onto a
+# second, internal disk (the board's eMMC) -- sector-for-sector identical GPT,
+# firmware region and every partition (same PARTUUIDs), so the eMMC boots exactly
+# like the SD card already does. growroot.service (system_files/usr/lib/systemd/
+# system/immutable-sbc-growroot.service) handles the eMMC being a different size
+# than the SD card on next boot, the same way it already grows root to fill
+# whatever the SD card's own actual capacity is.
+#
+# rk3588-only: only boards in that variant (rock-5c) have a second, internal disk
+# to install onto in the first place -- rpi has none.
+#
+# Usage: install-internal [<target-device>]
+#   <target-device>: e.g. /dev/mmcblk0. If omitted, auto-detected -- only when
+#   there's exactly one other whole-disk block device besides the one this system
+#   is running from.
+
+set -euo pipefail
+
+SELF="$(basename "$0")"
+SECTOR=512
+
+if [[ "${EUID}" -ne 0 ]]; then
+    echo "error: ${SELF} must run as root (raw disk access)" >&2
+    exit 1
+fi
+
+for tool in lsblk findmnt dd sha256sum blockdev sgdisk; do
+    command -v "${tool}" >/dev/null || {
+        echo "error: required tool '${tool}' not found" >&2
+        exit 1
+    }
+done
+
+### 1. Identify the running disk (the microSD) -- same findmnt+lsblk-PKNAME chain
+# uefi-updater.py already uses to tell the live disk apart from its ESP mountpoint.
+ESP=$(findmnt -rno TARGET /boot/efi) || {
+    echo "error: /boot/efi isn't mounted -- can't identify the disk this system is running from" >&2
+    exit 1
+}
+ESP_SOURCE=$(findmnt -no SOURCE "${ESP}")
+SRC_NAME=$(lsblk -rno PKNAME "${ESP_SOURCE}")
+if [[ -z "${SRC_NAME}" ]]; then
+    echo "error: couldn't determine the disk backing ${ESP} (${ESP_SOURCE})" >&2
+    exit 1
+fi
+SRC="/dev/${SRC_NAME}"
+
+### 2. Identify the target (the eMMC) -- explicit arg, or auto-detect iff unambiguous.
+TARGET="${1:-}"
+if [[ -z "${TARGET}" ]]; then
+    mapfile -t candidates < <(lsblk -rno NAME,TYPE | awk -v src="${SRC_NAME}" '$2 == "disk" && $1 != src {print $1}')
+    if [[ ${#candidates[@]} -eq 0 ]]; then
+        echo "error: no other disk found to install to -- is the eMMC present? pass its device path explicitly (e.g. ${SELF} /dev/mmcblk0)" >&2
+        exit 1
+    elif [[ ${#candidates[@]} -gt 1 ]]; then
+        disp=""
+        for c in "${candidates[@]}"; do disp+=" /dev/${c}"; done
+        echo "error: more than one candidate disk found (${disp# }) -- pass the target device path explicitly" >&2
+        exit 1
+    fi
+    TARGET="/dev/${candidates[0]}"
+fi
+
+if [[ ! -b "${TARGET}" ]]; then
+    echo "error: ${TARGET} is not a block device" >&2
+    exit 1
+fi
+if [[ "${TARGET}" == "${SRC}" ]]; then
+    echo "error: target (${TARGET}) is the disk this system is running from" >&2
+    exit 1
+fi
+
+mapfile -t target_mounts < <(lsblk -rno MOUNTPOINT "${TARGET}" | grep -v '^$' || true)
+if [[ ${#target_mounts[@]} -gt 0 ]]; then
+    echo "error: ${TARGET} has mounted filesystems (${target_mounts[*]}) -- unmount them first" >&2
+    exit 1
+fi
+
+### 3. How much to copy: up to the end of the source's last partition, not its full
+# nominal capacity -- a bigger microSD than the eMMC is fine as long as what's
+# actually on it fits (the common case: growroot already grew root to fill most of
+# the SD card, but the eMMC only needs to hold that same used data, not match its
+# raw size). sgdisk -e below fixes up the backup GPT for whatever the eMMC's real
+# size turns out to be, since it isn't reachable by this partial copy.
+SRC_END_SECTOR=$(sgdisk -p "${SRC}" | awk '$1 ~ /^[0-9]+$/ {print $3}' | sort -n | tail -1)
+if [[ -z "${SRC_END_SECTOR}" ]]; then
+    echo "error: couldn't read a partition table from ${SRC}" >&2
+    exit 1
+fi
+COPY_SECTORS=$((SRC_END_SECTOR + 1))
+COPY_BYTES=$((COPY_SECTORS * SECTOR))
+
+SRC_SIZE=$(blockdev --getsize64 "${SRC}")
+TARGET_SIZE=$(blockdev --getsize64 "${TARGET}")
+if [[ "${TARGET_SIZE}" -lt "${COPY_BYTES}" ]]; then
+    echo "error: ${TARGET} (${TARGET_SIZE} bytes) is smaller than the ${COPY_BYTES} bytes actually used on ${SRC} -- can't fit a 1:1 copy" >&2
+    exit 1
+fi
+
+### 4. Confirm -- destructive and irreversible, so requires typing the target path
+# back, not just a bare y/n.
+echo "== ${SELF}: clone the running disk onto internal storage =="
+echo "  source (running system): ${SRC} ($(lsblk -dno MODEL "${SRC}"), ${SRC_SIZE} bytes)"
+echo "  target (internal):       ${TARGET} ($(lsblk -dno MODEL "${TARGET}"), ${TARGET_SIZE} bytes)"
+echo "  copying:                 ${COPY_BYTES} bytes (${COPY_SECTORS} sectors)"
+echo
+echo "THIS WILL ERASE EVERYTHING CURRENTLY ON ${TARGET}."
+read -rp "Type the target device path (${TARGET}) to continue: " confirm
+if [[ "${confirm}" != "${TARGET}" ]]; then
+    echo "Aborted -- input didn't match ${TARGET}." >&2
+    exit 1
+fi
+
+SRC_HASH_FILE=$(mktemp)
+trap 'rm -f "${SRC_HASH_FILE}"' EXIT
+
+### 5. Copy, showing live progress -- the source is only read once total: tee hashes
+# the same stream dd is already reading, rather than re-reading the (possibly large)
+# SD card a second time just to have something to verify against.
+echo
+echo "Copying ${SRC} -> ${TARGET} ..."
+dd if="${SRC}" bs=4M count="${COPY_BYTES}" iflag=count_bytes status=progress \
+    | tee >(sha256sum | awk '{print $1}' >"${SRC_HASH_FILE}") \
+    | dd of="${TARGET}" bs=4M conv=fsync status=none
+
+### 6. Verify: read back what's actually on the target and compare -- this is the
+# real check (did the write succeed, bad blocks, etc.), not the source hash above
+# (which only proves what was read, not what landed).
+echo
+echo "Verifying ${TARGET} ..."
+TARGET_HASH=$(dd if="${TARGET}" bs=4M count="${COPY_BYTES}" iflag=count_bytes status=progress | sha256sum | awk '{print $1}')
+SRC_HASH=$(cat "${SRC_HASH_FILE}")
+
+if [[ "${TARGET_HASH}" != "${SRC_HASH}" ]]; then
+    echo "error: verification FAILED -- ${TARGET} does not match ${SRC} (source ${SRC_HASH}, target ${TARGET_HASH})" >&2
+    echo "Do not remove the microSD card -- the eMMC copy is not trustworthy yet. Try again." >&2
+    exit 1
+fi
+echo "Verified: ${TARGET} matches ${SRC} byte-for-byte (${SRC_HASH})."
+
+# Only meaningful once the copy is verified good -- moves/rebuilds the backup GPT to
+# the true end of the eMMC (unreachable by the partial copy above whenever the eMMC's
+# real size differs from what was copied). Metadata-only, doesn't touch anything
+# already verified above.
+echo "Placing backup GPT at the end of ${TARGET} ..."
+sgdisk -e "${TARGET}"
+
+### 7. Done -- the SD card is still what this running system boots from, so nothing
+# takes effect until it's shut down, the card is removed, and it's powered back on.
+echo
+echo "${SELF} finished: ${TARGET} is a verified, bootable copy of ${SRC}."
+echo "Shut down, remove the microSD card, then power the board back on to boot from ${TARGET}."
+read -rp "Shut down now? [y/N] " do_shutdown
+if [[ "${do_shutdown,,}" == "y" ]]; then
+    echo "Shutting down in 5 seconds -- remove the microSD card once the board powers off, then power it back on."
+    sleep 5
+    exec systemctl poweroff
+fi
+echo "Remember to shut down, remove the microSD card, and power back on before this takes effect."

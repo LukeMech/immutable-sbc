@@ -27,3 +27,9 @@ kernel/devicetree level is handled upstream by this board's [`edk2_url`](../boar
 biweekly schedule (`build.yml`). `bootc upgrade` pulls updates like any bootc/ostree system. Images are
 rechunked with [chunkah](https://github.com/coreos/chunkah) rather than `rpm-ostree compose build-chunked-oci`,
 which was implicated in one of the two dropped-file bugs above.
+
+`system_files/usr/bin/install-internal` clones whatever disk this system is currently booted from (normally
+a microSD) onto a second internal disk (the eMMC socket rock-5c boards have) -- sector-for-sector identical
+GPT/firmware/partitions, so the eMMC boots exactly like the SD card already does; `growroot.service` handles
+the eMMC being a different size on its own next boot, same as it already does for the SD card. rk3588-only:
+rpi boards have no second internal disk to install onto.
