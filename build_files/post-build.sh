@@ -45,6 +45,15 @@ dnf5 -y autoremove
 # rather than letting it fire (or not, since it's shimmed off during the kernel
 # swap) once per package. --add ostree: required for an ostree/bootc root to boot at
 # all, not optional.
+#
+# Expect a wall of "cp: setting attributes ... Operation not supported" /
+# "dracut-install: ERROR: installing '...'" noise here (e.g. for /root) -- that's
+# dracut-install's xattr-preserving cp failing on the container build's own overlayfs
+# layer, not a real failure. Confirmed non-fatal upstream (a Fedora bootc maintainer:
+# "They should not block the build", https://gitlab.com/fedora/bootc/tracker/-/issues/66;
+# same verbatim errors reported at
+# https://discussion.fedoraproject.org/t/errors-when-running-dracut-in-bootc-container-build/156626).
+# Still open/unresolved upstream as of 2025-08 -- nothing to fix on this end.
 dracut --no-hostonly --kver "${KVER}" --reproducible --add ostree -f \
     "/usr/lib/modules/${KVER}/initramfs.img"
 
