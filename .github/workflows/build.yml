@@ -6,10 +6,6 @@ on:
   schedule:
     - cron: '0 10 1,15 * *'  # ~every 2 weeks: 10:00 UTC on the 1st and 15th, as a fallback for quiet periods with no pushes
   push:
-    paths-ignore:
-      - '**/README.md'
-      - 'images/deps/**'
-      - '.github/workflows/build-deps.yml'
   workflow_dispatch:
 
 env:

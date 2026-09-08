@@ -101,3 +101,4 @@ rpm -q libedgetpu1-std
 cp "${RPM_PATH}" /rpms/kmods/
 
 rm -rf "${TMP}" "${BUILDROOT}" "${TOPDIR}"
+
