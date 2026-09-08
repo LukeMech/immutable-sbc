@@ -47,9 +47,16 @@ fi
 SRC="/dev/${SRC_NAME}"
 
 ### 2. Identify the target (the eMMC) -- explicit arg, or auto-detect iff unambiguous.
+# lsblk reports zram (compressed swap) and an eMMC's own boot0/boot1/rpmb hardware
+# partitions (bootloader-only special areas, not normal storage) as TYPE=disk too --
+# none of those are ever a valid clone target, so exclude them by name rather than
+# just by TYPE.
 TARGET="${1:-}"
 if [[ -z "${TARGET}" ]]; then
-    mapfile -t candidates < <(lsblk -rno NAME,TYPE | awk -v src="${SRC_NAME}" '$2 == "disk" && $1 != src {print $1}')
+    mapfile -t candidates < <(
+        lsblk -rno NAME,TYPE | awk -v src="${SRC_NAME}" \
+            '$2 == "disk" && $1 != src && $1 !~ /^zram/ && $1 !~ /^loop/ && $1 !~ /boot[0-9]+$/ && $1 !~ /rpmb$/ {print $1}'
+    )
     if [[ ${#candidates[@]} -eq 0 ]]; then
         echo "error: no other disk found to install to -- is the eMMC present? pass its device path explicitly (e.g. ${SELF} /dev/mmcblk0)" >&2
         exit 1
