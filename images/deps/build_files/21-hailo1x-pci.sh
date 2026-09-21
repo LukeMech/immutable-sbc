@@ -36,6 +36,15 @@ if [[ -z "${SRC_DIR}" ]]; then
     exit 1
 fi
 
+# Upstream bug: common/pcie_common.c calls strncpy() (hailo_pcie_vdma_get_required_channels,
+# hailo_pcie_vdma_program_firmware_batch) without including <linux/string.h>. Harmless while
+# some other kernel header pulled that in transitively, but Fedora kernel 7.2.5 dropped the
+# transitive include, turning the now-implicit strncpy declaration into a hard
+# -Werror=builtin-declaration-mismatch build failure. Not present on the hailo8 branch
+# 20-hailo8-pci.sh pins -- that pcie_common.c predates this strncpy call entirely. Drop this
+# patch once HAILO1X_DRIVER_COMMIT is bumped past an upstream fix.
+sed -i '/#include <linux\/errno.h>/i #include <linux/string.h>' "${SRC_DIR}/common/pcie_common.c"
+
 # Flat archive (files at its root) -- extracted straight into hailo/hailo10h/, matching
 # the "hailo/hailo10h/<name>" paths the driver requests (common/pcie_common.c's
 # hailo10h_files_stg{1,2,3} tables). Includes every u-boot-<N>.dtb.signed variant since
