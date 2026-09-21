@@ -37,13 +37,23 @@ if [[ -z "${SRC_DIR}" ]]; then
 fi
 
 # Upstream bug: common/pcie_common.c calls strncpy() (hailo_pcie_vdma_get_required_channels,
-# hailo_pcie_vdma_program_firmware_batch) without including <linux/string.h>. Harmless while
-# some other kernel header pulled that in transitively, but Fedora kernel 7.2.5 dropped the
-# transitive include, turning the now-implicit strncpy declaration into a hard
-# -Werror=builtin-declaration-mismatch build failure. Not present on the hailo8 branch
-# 20-hailo8-pci.sh pins -- that pcie_common.c predates this strncpy call entirely. Drop this
-# patch once HAILO1X_DRIVER_COMMIT is bumped past an upstream fix.
-sed -i '/#include <linux\/errno.h>/i #include <linux/string.h>' "${SRC_DIR}/common/pcie_common.c"
+# hailo_pcie_vdma_program_firmware_batch) without including <linux/string.h>. Adding just the
+# include (tried first) didn't fix it -- confirmed via CI, same two errors, byte-for-byte,
+# after the include landed (the compiler's own reported line numbers shifted by exactly the
+# inserted line, so it did land). Fedora kernel 7.2.5 has dropped strncpy() from
+# <linux/string.h> entirely, not just its transitive include -- has to be replaced with
+# strscpy(), the actively-maintained kernel string API, not just given a declaration. Not
+# present on the hailo8 branch 20-hailo8-pci.sh pins -- that pcie_common.c predates this
+# strncpy call entirely. Drop this patch once HAILO1X_DRIVER_COMMIT is bumped past an
+# upstream fix.
+sed -i \
+    -e '/#include <linux\/errno.h>/i #include <linux/string.h>' \
+    -e 's/strncpy(filename, file->filename, FW_FILENAME_MAX_LEN - 1);/strscpy(filename, file->filename, FW_FILENAME_MAX_LEN);/' \
+    "${SRC_DIR}/common/pcie_common.c"
+grep -q 'strncpy(filename, file->filename' "${SRC_DIR}/common/pcie_common.c" && {
+    echo "error: strncpy patch didn't match -- pcie_common.c changed upstream?" >&2
+    exit 1
+}
 
 # Flat archive (files at its root) -- extracted straight into hailo/hailo10h/, matching
 # the "hailo/hailo10h/<name>" paths the driver requests (common/pcie_common.c's
