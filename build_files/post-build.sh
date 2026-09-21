@@ -13,6 +13,36 @@ dnf5 -y remove nfs-utils
 
 dnf5 -y remove terra-release terra-gpg-keys
 
+# linux-firmware's main package only *Recommends* every one of these per-vendor
+# firmware sub-packages (confirmed in its spec) -- but Recommends still gets pulled
+# in by whatever built the base fedora-bootc:44 image itself, before this image's own
+# 00-pre-build.sh ever sets install_weak_deps=False, so that setting can't stop them.
+# None of these vendors' hardware exists on either board this repo targets (rpi:
+# Broadcom Wi-Fi only; rk3588: aic8800, built from source in images/deps/ instead --
+# see images/boards.toml's own brcm/ comment and images/rk3588/build_files/
+# 10-aic8800-wifi-bt.sh). Each one only Requires linux-firmware-whence (checked, same
+# spec), not the other way around, so removing them doesn't cascade into removing
+# anything real -- brcmfmac-firmware (rpi's actual onboard Wi-Fi) stays installed.
+dnf5 -y remove \
+    amd-gpu-firmware \
+    amd-ucode-firmware \
+    atheros-firmware \
+    cirrus-audio-firmware \
+    intel-audio-firmware \
+    intel-gpu-firmware \
+    mt7xxx-firmware \
+    nvidia-gpu-firmware \
+    nxpwireless-firmware \
+    qcom-wwan-firmware \
+    realtek-firmware \
+    tiwilink-firmware
+
+# Same base-image-baked-in-before-our-own-dnf.conf-edit story as the firmware removal
+# above -- vim-minimal (Provides: vi) isn't installed by anything in this repo, comes
+# from fedora-bootc:44 itself. nano already covers this image's only editing need
+# (base image ships it too), so drop vim rather than keep two.
+dnf5 -y remove vim-minimal
+
 ### Final cleanup: every COPR repo any hook enabled, every build-time-only dependency
 # 00-pre-build.sh installed, and the dnf cache -- all build-time-only convenience,
 # none of it should survive into the final image.
