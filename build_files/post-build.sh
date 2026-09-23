@@ -35,7 +35,8 @@ dnf5 -y remove \
     nxpwireless-firmware \
     qcom-wwan-firmware \
     realtek-firmware \
-    tiwilink-firmware
+    tiwilink-firmware \
+    intel-npu-firmware
 
 # Same base-image-baked-in-before-our-own-dnf.conf-edit story as the firmware removal
 # above -- vim-minimal (Provides: vi) isn't installed by anything in this repo, comes
