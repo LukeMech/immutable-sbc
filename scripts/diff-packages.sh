@@ -6,22 +6,27 @@
 # Runs pre-push in build.yml's build_push job -- a schedule run also greps the output
 # for "No package changes." to decide whether it found anything new to publish.
 #
-# Usage: diff-packages.sh <previous-image-ref> <new-image-ref> <output.md>
+# Also writes the raw rows to <output.tsv> (see render-package-changes.sh for the
+# format) for merge-changelogs.sh to find changes shared by every image -- only when
+# there's a previous image to diff against; no TSV means "Initial build".
+#
+# Usage: diff-packages.sh <previous-image-ref> <new-image-ref> <output.md> <output.tsv>
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PREV_IMAGE="${1:?usage: $0 <previous-image-ref> <new-image-ref> <output.md>}"
-NEW_IMAGE="${2:?usage: $0 <previous-image-ref> <new-image-ref> <output.md>}"
-OUTPUT="${3:?usage: $0 <previous-image-ref> <new-image-ref> <output.md>}"
+USAGE="usage: $0 <previous-image-ref> <new-image-ref> <output.md> <output.tsv>"
+PREV_IMAGE="${1:?${USAGE}}"
+NEW_IMAGE="${2:?${USAGE}}"
+OUTPUT="${3:?${USAGE}}"
+OUTPUT_TSV="${4:?${USAGE}}"
 
 PREV_PKGS="$(mktemp)"
 NEW_PKGS="$(mktemp)"
-ADDED="$(mktemp)"
-REMOVED="$(mktemp)"
-UPDATED="$(mktemp)"
-trap 'rm -f "${PREV_PKGS}" "${NEW_PKGS}" "${ADDED}" "${REMOVED}" "${UPDATED}"' EXIT
+trap 'rm -f "${PREV_PKGS}" "${NEW_PKGS}"' EXIT
+
+rm -f "${OUTPUT_TSV}"
 
 HAVE_PREV=0
 if podman pull --quiet "${PREV_IMAGE}" >/dev/null 2>&1; then
@@ -33,64 +38,30 @@ fi
 
 "${SCRIPT_DIR}/list-packages.sh" "${NEW_IMAGE}" >"${NEW_PKGS}"
 
-: >"${OUTPUT}"
-
 if [[ "${HAVE_PREV}" -eq 1 ]]; then
-    # name<TAB>previous<TAB>new ('-' if a side lacks it), routed into one of three
-    # buckets -- so a release with only updates doesn't show empty headers.
+    # name<TAB>previous<TAB>new ('-' if a side lacks it), tagged with its bucket.
+    : >"${OUTPUT_TSV}"
     while IFS=$'\t' read -r name prev new; do
         if [[ "${prev}" == "${new}" ]]; then
             continue
         elif [[ "${prev}" == "-" ]]; then
-            printf '| %s | %s |\n' "${name}" "${new}" >>"${ADDED}"
+            kind=added
         elif [[ "${new}" == "-" ]]; then
-            printf '| %s | %s |\n' "${name}" "${prev}" >>"${REMOVED}"
+            kind=removed
         else
-            printf '| %s | %s | %s |\n' "${name}" "${prev}" "${new}" >>"${UPDATED}"
+            kind=updated
         fi
+        printf '%s\t%s\t%s\t%s\n' "${kind}" "${name}" "${prev}" "${new}" >>"${OUTPUT_TSV}"
     done < <(join -t $'\t' -a1 -a2 -e '-' -o 0,1.2,2.2 -j1 "${PREV_PKGS}" "${NEW_PKGS}")
 
-    if [[ -s "${ADDED}" || -s "${REMOVED}" || -s "${UPDATED}" ]]; then
-        echo "## 📦 Package changes" >>"${OUTPUT}"
-        echo >>"${OUTPUT}"
-
-        if [[ -s "${ADDED}" ]]; then
-            echo "### ✨ Added" >>"${OUTPUT}"
-            echo >>"${OUTPUT}"
-            echo "| Package | Version |" >>"${OUTPUT}"
-            echo "|---|---|" >>"${OUTPUT}"
-            cat "${ADDED}" >>"${OUTPUT}"
-            echo >>"${OUTPUT}"
-        fi
-
-        if [[ -s "${UPDATED}" ]]; then
-            echo "### 🔄 Updated" >>"${OUTPUT}"
-            echo >>"${OUTPUT}"
-            echo "| Package | Previous | New |" >>"${OUTPUT}"
-            echo "|---|---|---|" >>"${OUTPUT}"
-            cat "${UPDATED}" >>"${OUTPUT}"
-            echo >>"${OUTPUT}"
-        fi
-
-        if [[ -s "${REMOVED}" ]]; then
-            echo "### ❌ Removed" >>"${OUTPUT}"
-            echo >>"${OUTPUT}"
-            echo "| Package | Version |" >>"${OUTPUT}"
-            echo "|---|---|" >>"${OUTPUT}"
-            cat "${REMOVED}" >>"${OUTPUT}"
-            echo >>"${OUTPUT}"
-        fi
-    else
-        echo "## 📦 Package changes" >>"${OUTPUT}"
-        echo >>"${OUTPUT}"
-        echo "No package changes." >>"${OUTPUT}"
-        echo >>"${OUTPUT}"
-    fi
+    "${SCRIPT_DIR}/render-package-changes.sh" "${OUTPUT_TSV}" >"${OUTPUT}"
 else
-    echo "## Initial build" >>"${OUTPUT}"
-    echo >>"${OUTPUT}"
-    echo "No previous image to diff against." >>"${OUTPUT}"
-    echo >>"${OUTPUT}"
+    {
+        echo "## Initial build"
+        echo
+        echo "No previous image to diff against."
+        echo
+    } >"${OUTPUT}"
 fi
 
 cat "${OUTPUT}"

@@ -218,7 +218,7 @@ jobs:
             done < <(git log --format='%h' "${PREV_TAG}")
           fi
 
-          ./scripts/diff-packages.sh "${PREV_IMAGE}" "${NEW_IMAGE}" "${PKG_CHANGELOG}"
+          ./scripts/diff-packages.sh "${PREV_IMAGE}" "${NEW_IMAGE}" "${PKG_CHANGELOG}" "${PKG_CHANGELOG%.md}.tsv"
 
           if grep -qx 'No package changes\.' "${PKG_CHANGELOG}"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -231,7 +231,10 @@ jobs:
         if: steps.check-changes.outcome == 'success'
         with:
           name: changelog-${{ matrix.variant }}
-          path: /tmp/package-changelog-${{ matrix.variant }}.md
+          # .tsv is absent on an initial build -- merge-changelogs.sh handles that.
+          path: |
+            /tmp/package-changelog-${{ matrix.variant }}.md
+            /tmp/package-changelog-${{ matrix.variant }}.tsv
           retention-days: 1
 
       # Rechunk/tag/push/sign matter only for a published image: never on a PR,
@@ -423,33 +426,14 @@ jobs:
           VARIANTS: ${{ needs.discover.outputs.variants }}
         run: |
           set -euo pipefail
-          MULTI=$(echo "${VARIANTS}" | jq 'length > 1')
-
-          : > changelog.md
-          for VARIANT in $(echo "${VARIANTS}" | jq -r '.[]'); do
-            PKG_FILE="changelog-artifacts/package-changelog-${VARIANT,,}.md"
-
-            if [[ "${MULTI}" == "true" ]]; then
-              echo "# ${VARIANT}" >> changelog.md
-              echo >> changelog.md
-            fi
-
-            # A changelog is a nicety, not a reason to block the release --
-            # fall back to a placeholder if the artifact's missing.
-            if [[ -f "${PKG_FILE}" ]]; then
-              cat "${PKG_FILE}" >> changelog.md
-            else
-              echo "## Notes" >> changelog.md
-              echo >> changelog.md
-              echo "Changelog artifact missing for this variant -- see commit history below." >> changelog.md
-              echo >> changelog.md
-            fi
-          done
+          # Changes identical across every variant go into one "All images" section.
+          mapfile -t VARIANT_LIST < <(echo "${VARIANTS}" | jq -r '.[]')
+          ./scripts/merge-changelogs.sh changelog-artifacts "${VARIANT_LIST[@]}" > changelog.md
 
           # One shared section, not one per variant -- every variant builds from the
           # same commit of this same repo, so the commit range since the last release
           # is identical regardless of which variant you're reading about (unlike the
-          # per-variant package diff above, which genuinely does differ).
+          # per-variant package diff above, which genuinely can differ).
           echo "## Commits" >> changelog.md
           echo >> changelog.md
           PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
