@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: '0 10 1,15 * *'  # ~every 2 weeks: 10:00 UTC on the 1st and 15th, as a fallback for quiet periods with no pushes
   push:
+    # Dependabot's own branch pushes only get Dependabot secrets (no SIGNING_SECRET),
+    # so test-branch mode's cosign step fails with "invalid pem block" on an empty
+    # key. Its pull_request run already builds the change -- nothing lost here.
+    branches-ignore:
+      - 'dependabot/**'
   workflow_dispatch:
 
 env:
