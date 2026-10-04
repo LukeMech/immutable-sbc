@@ -97,7 +97,6 @@ jobs:
           with open("images/boards.toml", "rb") as f:
               data = tomllib.load(f)[board_name]
           print(f"variant={data['variant']}")
-          print(f"disk_config={data['disk_config']}")
           has_firmware = "edk2_url" in data
           print(f"has_firmware={'true' if has_firmware else 'false'}")
           if has_firmware:
@@ -124,60 +123,53 @@ jobs:
             "${{ steps.board-config.outputs.firmware_sha256 }}" \
             firmware.img
 
+      # image-builder (osbuild/image-builder-cli), its default partition
+      # layout: the action takes no disk config. growroot.service grows root to
+      # the card's size on first boot either way. btrfs as declared in-image
+      # (00-root-filesystem.toml) -- image-builder needs it spelled out for
+      # Fedora. Writes to ./output, owned by the runner's user afterwards.
       - name: Build disk image
-        id: build
-        uses: osbuild/bootc-image-builder-action@486ce86198c7d7e123a19dd239525562c4f520d0 # main
+        uses: osbuild/image-builder-action@a56f95dd77327e604a4f4d9fc06a9641313fda36 # main
         with:
-          config-file: ./${{ steps.board-config.outputs.disk_config }}
-          image: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
-          types: raw
-          # Root filesystem type is declared in-image (00-root-filesystem.toml),
-          # not here -- no --rootfs flag needed.
-          additional-args: --use-librepo=True
+          image_type: raw
+          bootc_ref: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
+          bootc_default_fs: btrfs
 
       - name: Compose flashable image
         run: |
           set -euo pipefail
-          OUTPUT_DIR="${{ steps.build.outputs.output-directory }}"
           OUT_NAME="immutable-sbc-${{ matrix.board }}"
 
-          # Locate the raw disk wherever bootc-image-builder put it, rather than assume
-          # a fixed subpath -- its output layout has changed between versions.
-          RAW_IMAGE=$(find "${OUTPUT_DIR}" -iname '*.raw' -print -quit)
+          # Wherever image-builder put the raw disk (output/<distro>-raw-<arch>/...),
+          # decompressed if it came compressed.
+          RAW_IMAGE=$(find output -iname '*.raw*' -print -quit)
           if [[ -z "${RAW_IMAGE}" ]]; then
-              echo "error: no .raw file found under ${OUTPUT_DIR}" >&2
-              find "${OUTPUT_DIR}"
+              echo "error: no raw disk image under output/" >&2
+              find output
               exit 1
           fi
           echo "Found raw disk image: ${RAW_IMAGE}"
-          RAW_DIR=$(dirname "${RAW_IMAGE}")
-          # sudo: bootc-image-builder-action runs rootful, so the output dir comes out
-          # root-owned -- without this, zstd's -o write below fails "Permission denied".
-          sudo chown "$(id -u):$(id -g)" "${RAW_DIR}"
+          case "${RAW_IMAGE}" in
+          *.xz) xz -d "${RAW_IMAGE}" && RAW_IMAGE=${RAW_IMAGE%.xz} ;;
+          *.zst) zstd -d --rm "${RAW_IMAGE}" && RAW_IMAGE=${RAW_IMAGE%.zst} ;;
+          esac
 
           if [[ "${{ steps.board-config.outputs.has_firmware }}" == "true" ]]; then
-            ./scripts/compose-sdcard-image.sh \
-              "${{ steps.board-config.outputs.firmware_layout }}" \
-              firmware.img \
-              "${RAW_IMAGE}" \
-              "${OUT_NAME}.raw"
-            # sudo: root-owned output, same reason as above (confirmed
-            # "Permission denied" otherwise).
-            sudo rm -f "${RAW_IMAGE}"
+            ./scripts/compose-sdcard-image.sh               "${{ steps.board-config.outputs.firmware_layout }}"               firmware.img               "${RAW_IMAGE}"               "${OUT_NAME}.raw"
+            rm -f "${RAW_IMAGE}"
           else
-            # sudo mv: same root-owned-output reason as above.
-            sudo mv "${RAW_IMAGE}" "${OUT_NAME}.raw"
-            sudo chown "$(id -u):$(id -g)" "${OUT_NAME}.raw"
+            mv "${RAW_IMAGE}" "${OUT_NAME}.raw"
           fi
 
-          zstd -T0 -12 --rm "${OUT_NAME}.raw" -o "${RAW_DIR}/${OUT_NAME}.img.zst"
-          sha256sum "${RAW_DIR}/${OUT_NAME}.img.zst" > "${RAW_DIR}/${OUT_NAME}.img.zst.sha256"
+          mkdir -p dist
+          zstd -T0 -12 --rm "${OUT_NAME}.raw" -o "dist/${OUT_NAME}.img.zst"
+          (cd dist && sha256sum "${OUT_NAME}.img.zst" > "${OUT_NAME}.img.zst.sha256")
 
       - name: Upload disk image and checksum to Job Artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: immutable-sbc-${{ matrix.board }}-raw
-          path: ${{ steps.build.outputs.output-directory }}
+          path: dist/
           if-no-files-found: error
           retention-days: 1
           overwrite: true
@@ -232,8 +224,8 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ inputs.tag }}
-          # ** because output is nested by type; fail_on_unmatched_files catches a glob
-          # that stops matching (confirmed: a flat glob silently published nothing).
+          # fail_on_unmatched_files catches a glob that stops matching (confirmed:
+          # a glob that matched nothing once silently published nothing).
           fail_on_unmatched_files: true
           files: |
             artifacts/**/*.zst

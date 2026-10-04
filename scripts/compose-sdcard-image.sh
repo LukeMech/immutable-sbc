@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Composes a flashable board image from a firmware blob and a bootc-image-builder
+# Composes a flashable board image from a firmware blob and an image-builder
 # "raw" output. Two board families need this, in different ways -- picked by
 # <layout>:
 #
@@ -14,16 +14,16 @@
 #        and /etc/fstab keep working.
 #
 #   fat: a Raspberry Pi's EEPROM bootloader just wants the first FAT partition --
-#        already the ESP bootc-image-builder made -- so firmware (a zip: RPI_EFI.fd,
+#        already the ESP image-builder made -- so firmware (a zip: RPI_EFI.fd,
 #        config.txt, device trees, and -- Pi 4B only -- start4.elf/fixup4.dat/
 #        overlays/) is copied into that filesystem via mtools instead, no GPT
 #        changes needed.
 #
-# Usage: compose-sdcard-image.sh <raw|fat> <firmware> <bib-raw-image> <output.raw>
+# Usage: compose-sdcard-image.sh <raw|fat> <firmware> <raw-image> <output.raw>
 
 set -euo pipefail
 
-USAGE="usage: $0 <raw|fat> <firmware> <bib-raw-image> <output.raw>"
+USAGE="usage: $0 <raw|fat> <firmware> <raw-image> <output.raw>"
 LAYOUT="${1:?${USAGE}}"
 FIRMWARE="${2:?${USAGE}}"
 OS_RAW_IMG="${3:?${USAGE}}"

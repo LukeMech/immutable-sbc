@@ -25,7 +25,7 @@ boards fit together. Today there's two variants across three boards:
    no password to type.
 4. The root filesystem grows to fill the rest of the card/eMMC automatically on first boot
    (`immutable-sbc-growroot.service`, see [`build_files/05-gnome-minimal.sh`](build_files/05-gnome-minimal.sh))
-   -- the raw image itself is deliberately built small ([`disk_config/disk.toml`](disk_config/disk.toml)).
+   -- the flashed image's own partition sizes don't matter.
 
 ## OTA updates
 
@@ -53,7 +53,7 @@ policy. `system_files/etc/containers/registries.d/lukemech.yaml` points podman/s
 
 The `containers-storage` transport (images already resolved into local storage) stays `insecureAcceptAnything`
 -- re-checking there wouldn't catch anything `docker` didn't already catch on the way in, and would only block
-legitimate reads of an already-verified image; `bootc-image-builder` installs from exactly such a local
+legitimate reads of an already-verified image; image-builder installs from exactly such a local
 reference when baking a disk image (confirmed in CI: scoping this like `docker` doesn't work --
 `containers-storage` needs a `[graph-driver@graph-root]` prefix, and osbuild's build root path is unpredictable).
 `system_files/usr/lib/bootc/install/01-sigpolicy.toml` sets `enforce-container-sigpolicy = true`, so every
@@ -86,7 +86,7 @@ for the general shape of this repo -- `Containerfile` + `build_files/` +
 | [`images/rk3588/`](images/rk3588/) | The `rk3588` variant's own overlay: `build_files/` (installs the aic8800 driver rpm from `images/deps/`, `mesa-libTeflon`), `system_files/usr/bin/install-internal` (clones the running microSD onto the board's internal eMMC) -- see [`images/rk3588/README.md`](images/rk3588/README.md) |
 | [`images/rpi/`](images/rpi/) | The `rpi` variant's own overlay: `build_files/` (installs the Hailo PCIe driver + HailoRT rpms from `images/deps/`, wires up a Hailo `npu-run` backend for the optional AI HAT+ and AI HAT+ 2) -- see [`images/rpi/README.md`](images/rpi/README.md) |
 | [`images/deps/`](images/deps/) | Not a variant -- a side image (`ghcr.io/lukemech/immutable-sbc-deps`) of prebuilt kernel/kmod/HailoRT RPMs, bind-mounted into the main build instead of compiled there. See [`images/deps/README.md`](images/deps/README.md) |
-| [`disk_config/`](disk_config/) | bootc-image-builder disk configs (deliberately small partition floors, not final sizes -- see the growroot service), referenced by path from `images/boards.toml` |
+| [`disk_config/`](disk_config/) | bootc-image-builder disk configs for the Justfile's local builds (deliberately small partition floors, not final sizes -- see the growroot service). CI's flash images (build-flash.yml, image-builder) use image-builder's default layout. |
 | `Containerfile`, `build_files/`, `system_files/` | The OCI image, generic across variants: base Fedora bootc (kernel replaced with the pinned one from `images/deps/`, see `build_files/00-pre-build.sh`), minimal GNOME, the default account (`sysusers.d`/`tmpfiles.d`), power defaults (`dconf`), the root-growth service, the enforced signature policy (`policy.json` + `registries.d/`), and Coral USB/PCIe accelerator support (`libedgetpu` here, `gasket`/`apex` rpm from `images/deps/`) for any board. Base image and chunkah are floating tags, not digest pins -- see their own comments for why. |
 | `scripts/` | Generic, parameterized tools shared across every variant/board: firmware fetch+verify, disk composition (`compose-sdcard-image.sh`: dd+GPT rebuild for `firmware_layout = "raw"`, `mtools` ESP copy for `"fat"`), changelog generation |
 | `.github/workflows/build.yml` | Matrixes over every variant; builds, rechunks, pushes and signs each OCI image to GHCR on push to `main`, a biweekly schedule, or manual dispatch (PRs skip rechunk/push/sign). Diffs against the last release's commit to build a changelog and skip publishing on a no-op schedule run; `release-meta` then tags and publishes the release before build-flash.yml starts. |

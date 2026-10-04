@@ -55,7 +55,7 @@ Python bindings RPATH bug), but whether a HAT actually works -- driver probes co
 backend produces sane detections -- is still unverified.
 
 UEFI firmware is board-specific, same as `rk3588`, but installed differently: a Pi's EEPROM bootloader just
-wants a FAT32 first partition, the same one bootc-image-builder already makes the ESP, so
+wants a FAT32 first partition, the same one image-builder already makes the ESP, so
 [`compose-sdcard-image.sh`](../../scripts/compose-sdcard-image.sh) copies firmware into that filesystem
 (`firmware_layout = "fat"`) instead of dd'ing it to a fixed offset like RK3588's `"raw"` -- no GPT surgery
 needed.
