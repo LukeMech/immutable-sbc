@@ -1,6 +1,7 @@
 name: Build container image
 # Every non-PR run chains into release-meta (publishes) then build-flash.yml
-# (via uses:, not a separate trigger).
+# (via uses:, not a separate trigger) -- and starts, when needed, with the deps
+# image (build-deps.yml, job deps).
 on:
   pull_request:
   schedule:
@@ -21,59 +22,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A push touching BOTH images/deps/** (build-deps.yml's own push trigger) and
-  # something outside it (this workflow's own) fires both workflows off the same
-  # commit in parallel -- without this, build_push below could pull
-  # immutable-sbc-deps:latest before build-deps.yml has finished pushing the new
-  # one. Runs unconditionally (not gated by an `if:`) so it never leaves discover's
-  # `needs:` pointing at a skipped job -- the wait itself short-circuits instantly
-  # for schedule/dispatch, which have no sibling run to wait for.
-  wait-for-deps:
-    name: Wait for deps image build (same-push sibling run, if any)
+  # Rebuild the deps image first, in this very run (job deps), and build the
+  # images on it: on the schedule (a new kernel -- published only then), and for
+  # a push that changed images/deps/ or build-deps.yml (a new branch counts what
+  # it changed against the default branch).
+  changes:
+    name: Check for deps changes
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
+    outputs:
+      deps: ${{ steps.diff.outputs.deps }}
     steps:
-      - name: Wait for a same-commit build-deps.yml run to finish
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Schedule, or images/deps/ changed since the previous push
+        id: diff
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
           EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-
+          if [[ "${EVENT}" == "schedule" ]]; then
+            echo "deps=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "${EVENT}" != "push" ]]; then
-            echo "Not a push event -- no sibling build-deps.yml run possible, nothing to wait for."
+            echo "deps=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          # GitHub dispatches sibling-workflow runs for the same push within seconds,
-          # but not necessarily instantly -- poll briefly for it to even show up
-          # before concluding this push never touched images/deps/ at all.
-          RUN_ID=""
-          for _ in $(seq 1 12); do
-            RUN_ID=$(gh run list --repo "${REPO}" --workflow=build-deps.yml \
-                --json databaseId,headSha --jq ".[] | select(.headSha == \"${SHA}\") | .databaseId" \
-                | head -1)
-            [[ -n "${RUN_ID}" ]] && break
-            sleep 5
-          done
-
-          if [[ -z "${RUN_ID}" ]]; then
-            echo "No build-deps.yml run found for ${SHA} -- this push didn't touch images/deps/, nothing to wait for."
-            exit 0
+          BASE=${BEFORE}
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            BASE=$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD)
+          fi
+          if git diff --quiet "${BASE}" HEAD -- images/deps .github/workflows/build-deps.yml; then
+            echo "deps=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deps=true" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "Waiting for build-deps.yml run ${RUN_ID} (same commit ${SHA}) to finish..."
-          # Not --exit-status: a failed deps build shouldn't block the main build --
-          # it just means build_push falls back to whatever immutable-sbc-deps:latest
-          # was already published, no worse off than before this push.
-          gh run watch "${RUN_ID}" --repo "${REPO}"
+  deps:
+    name: Deps image
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-deps.yml
 
   discover:
     name: Discover variants
-    needs: wait-for-deps
+    # After the deps image, when this run rebuilt it; right away when it didn't
+    # (skipped); never on a failed one -- that would build on stale deps.
+    needs: [changes, deps]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.deps.result == 'success' || needs.deps.result == 'skipped') }}
     runs-on: ubuntu-latest
     outputs:
       variants: ${{ steps.list.outputs.variants }}
@@ -99,6 +103,9 @@ jobs:
   build_push:
     name: Build and push image (${{ matrix.variant }})
     needs: discover
+    # !cancelled() here and below: a skipped deps job further up would skip
+    # every later job too.
+    if: ${{ !cancelled() && needs.discover.result == 'success' }}
     strategy:
       matrix:
         variant: ${{ fromJson(needs.discover.outputs.variants) }}
@@ -341,7 +348,7 @@ jobs:
   aggregate:
     name: Check publish status
     needs: [discover, build_push]
-    if: github.event_name != 'pull_request'
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.build_push.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.check.outputs.published }}
@@ -370,7 +377,7 @@ jobs:
   release-meta:
     name: Publish release
     needs: [discover, build_push, aggregate]
-    if: github.event_name != 'pull_request' && needs.aggregate.outputs.published == 'true'
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.aggregate.result == 'success' && needs.aggregate.outputs.published == 'true' }}
     runs-on: ubuntu-26.04-arm
     permissions:
       contents: write
@@ -474,7 +481,7 @@ jobs:
   build-flash:
     name: Build flash images
     needs: [discover, build_push, release-meta]
-    if: github.event_name != 'pull_request'
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.release-meta.result == 'success' }}
     uses: ./.github/workflows/build-flash.yml
     with:
       publish: true

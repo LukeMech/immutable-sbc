@@ -10,9 +10,9 @@ the actual bootable images applies here -- see [`../../.github/workflows/build-d
 
 **Why a separate image**: kmod and HailoRT builds were the heaviest, most failure-prone part of every
 image build in this repo. Building them here instead means `build.yml`'s own builds no longer pay that
-cost on every push, and this image's own rebuild is gated to only when something here actually changed (an
-`images/deps/` push) or on its own schedule (biweekly, one day ahead of `build.yml`'s own, so a fresh deps
-image always exists before a scheduled main build picks it up).
+cost on every push. `build.yml` rebuilds this image itself (its `deps` job, calling `build-deps.yml`), first,
+in the same run, before any variant builds on it: only on a push that changed something here (an
+`images/deps/` change) and on `build.yml`'s own biweekly schedule (publishing then only a new kernel).
 
 **Contents**:
 

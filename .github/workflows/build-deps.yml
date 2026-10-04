@@ -1,18 +1,14 @@
 name: Build deps image
 # Prebuilt kernel + kmod + HailoRT RPMs the main build.yml bind-mounts in (images/deps/
 # Containerfile, ghcr.io/lukemech/immutable-sbc-deps) -- deliberately separate from
-# build.yml: this shouldn't rebuild on every main-image push, only when something here
-# actually changed, or on its own schedule (see below).
+# the images' own build: this shouldn't rebuild on every main-image push.
+#
+# build.yml calls this workflow (its job deps) -- for a push that changed
+# images/deps/ and on its schedule (publishing then only a new kernel) -- and
+# builds the images after it, in the same run. On its own: by hand.
 
 on:
-  push:
-    paths:
-      - 'images/deps/**'
-      - '.github/workflows/build-deps.yml'
-  schedule:
-    # One day before build.yml's own biweekly cron (0 10 1,15 * *)
-    - cron: '0 10 14 * *'
-    - cron: '0 10 28 * *'
+  workflow_call:
   workflow_dispatch:
 
 env:
@@ -20,8 +16,10 @@ env:
   IMAGE_NAME: immutable-sbc-deps
   DEFAULT_TAG: latest
 
+# A fixed name, not github.workflow: called from build.yml that would be
+# build.yml's own name -- the same group as the caller's run, cancelling it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  group: immutable-sbc-deps-${{ github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
