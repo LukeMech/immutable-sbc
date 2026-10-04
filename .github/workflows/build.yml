@@ -4,6 +4,13 @@ name: Build container image
 # image (build-deps.yml, job deps).
 on:
   pull_request:
+    # Nothing that ends up in an image: docs, repo housekeeping.
+    paths-ignore: &ignored
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - '.github/dependabot.yml'
   schedule:
     - cron: '0 10 1,15 * *'  # ~every 2 weeks: 10:00 UTC on the 1st and 15th, as a fallback for quiet periods with no pushes
   push:
@@ -12,6 +19,7 @@ on:
     # key. Its pull_request run already builds the change -- nothing lost here.
     branches-ignore:
       - 'dependabot/**'
+    paths-ignore: *ignored
   workflow_dispatch:
 
 env:
