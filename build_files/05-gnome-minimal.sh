@@ -4,9 +4,8 @@ set -ouex pipefail
 
 ### Grow root on first boot
 #
-# Whatever size the image was built with (image-builder's default layout in
-# CI, disk_config/disk.toml's 1 GiB floor locally), growroot.service grows
-# root to fill the card on every boot (no-op once maxed).
+# Whatever size the image was built with (image-builder's default layout),
+# growroot.service grows root to fill the card on every boot (no-op once maxed).
 dnf5 install -y cloud-utils-growpart btrfs-progs
 systemctl enable immutable-sbc-growroot.service
 
