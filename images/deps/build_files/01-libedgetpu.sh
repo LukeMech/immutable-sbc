@@ -12,9 +12,9 @@ set -ouex pipefail
 # every other "weird package" in this repo.
 #
 # No Fedora/COPR package exists -- upstream (google-coral/libedgetpu) only builds via
-# Bazel, no prebuilt RPM anywhere. Google's own apt repo ships a prebuilt aarch64 .deb
-# of the same Apache-2.0 binary though, so this unpacks that rather than building from
-# source.
+# Bazel, no prebuilt RPM anywhere. Its maintained fork (feranick/libedgetpu) publishes
+# prebuilt aarch64 .debs of the same Apache-2.0 library on GitHub (Google's own apt
+# repo is gone), so this unpacks one rather than building from source.
 #
 # USB-only: the USB Accelerator talks over libusb (Depends: libusb-1.0-0 in the .deb's
 # own control file, matched here by the rpm's own `Requires: libusb1` -- the main
@@ -72,9 +72,9 @@ BuildArch: ${ARCH}
 Requires: libusb1
 
 %description
-libedgetpu.so.1, unpacked from Google's own prebuilt arm64 .deb
-(packages.cloud.google.com/apt, coral-edgetpu-stable) -- no Fedora package or source
-RPM exists; upstream only builds via Bazel.
+libedgetpu.so.1, unpacked from the prebuilt arm64 .deb of feranick/libedgetpu,
+google-coral/libedgetpu's maintained fork -- no Fedora package or source RPM
+exists; upstream only builds via Bazel.
 
 %files
 /usr/lib64/libedgetpu.so.1.0
