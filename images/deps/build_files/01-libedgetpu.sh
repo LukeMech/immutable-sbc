@@ -12,9 +12,10 @@ set -ouex pipefail
 # every other "weird package" in this repo.
 #
 # No Fedora/COPR package exists -- upstream (google-coral/libedgetpu) only builds via
-# Bazel, no prebuilt RPM anywhere. Its maintained fork (feranick/libedgetpu) publishes
-# prebuilt aarch64 .debs of the same Apache-2.0 library on GitHub (Google's own apt
-# repo is gone), so this unpacks one rather than building from source.
+# Bazel, no prebuilt RPM anywhere. Google's own Edge TPU runtime release on GitHub
+# (a zip; its apt repo is gone) carries the prebuilt aarch64 library, so this unpacks
+# that rather than building from source: the "throttled" build -- what the apt repo
+# called libedgetpu1-std (standard clock; "direct" = libedgetpu1-max).
 #
 # USB-only: the USB Accelerator talks over libusb (Depends: libusb-1.0-0 in the .deb's
 # own control file, matched here by the rpm's own `Requires: libusb1` -- the main
@@ -26,20 +27,17 @@ set -ouex pipefail
 ARCH=$(uname -m)
 
 TMP=$(mktemp -d)
-curl -fsSL -o "${TMP}/libedgetpu1-std.deb" "${LIBEDGETPU_DEB_URL}"
-echo "${LIBEDGETPU_DEB_SHA256}  ${TMP}/libedgetpu1-std.deb" | sha256sum -c -
+curl -fsSL -o "${TMP}/edgetpu_runtime.zip" "${LIBEDGETPU_ZIP_URL}"
+echo "${LIBEDGETPU_ZIP_SHA256}  ${TMP}/edgetpu_runtime.zip" | sha256sum -c -
 
-# .deb = an ar archive of debian-binary + control.tar.gz + data.tar.xz -- only the
-# latter has real files (the shared lib + a udev rule).
-(cd "${TMP}" && ar x libedgetpu1-std.deb data.tar.xz)
-mkdir -p "${TMP}/data"
-tar -xJf "${TMP}/data.tar.xz" -C "${TMP}/data"
-
-LIB_SRC=$(find "${TMP}/data" -iname 'libedgetpu.so.1.0' -type f -print -quit)
-if [[ -z "${LIB_SRC}" ]]; then
-    echo "error: libedgetpu.so.1.0 not found in the downloaded .deb" >&2
-    exit 1
-fi
+# Only the one file out of the zip (python3: the builder has no unzip).
+LIB_SRC="${TMP}/libedgetpu.so.1.0"
+python3 - "${TMP}/edgetpu_runtime.zip" "${LIB_SRC}" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z, open(sys.argv[2], "wb") as out:
+    out.write(z.read("edgetpu_runtime/libedgetpu/throttled/aarch64/libedgetpu.so.1.0"))
+PY
+[[ -s "${LIB_SRC}" ]]
 
 BUILDROOT=$(mktemp -d)
 
@@ -72,9 +70,9 @@ BuildArch: ${ARCH}
 Requires: libusb1
 
 %description
-libedgetpu.so.1, unpacked from the prebuilt arm64 .deb of feranick/libedgetpu,
-google-coral/libedgetpu's maintained fork -- no Fedora package or source RPM
-exists; upstream only builds via Bazel.
+libedgetpu.so.1 (standard clock), from Google's own Edge TPU runtime release
+(google-coral/libedgetpu on GitHub) -- no Fedora package or source RPM exists;
+upstream only builds via Bazel.
 
 %files
 /usr/lib64/libedgetpu.so.1.0
