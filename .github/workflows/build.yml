@@ -242,7 +242,7 @@ jobs:
           fi
 
       - name: Upload changelog artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.check-changes.outcome == 'success'
         with:
           name: changelog-${{ matrix.variant }}
@@ -319,7 +319,7 @@ jobs:
         run: touch published.marker
 
       - name: Upload published marker artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.push-image.outcome == 'success' && steps.test-mode.outputs.test_mode != 'true'
         with:
           name: published-${{ matrix.variant }}
