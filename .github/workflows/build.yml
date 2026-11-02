@@ -362,7 +362,7 @@ jobs:
       published: ${{ steps.check.outputs.published }}
     steps:
       - name: Download publish markers
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: published-*
           path: publish-markers
@@ -428,7 +428,7 @@ jobs:
       # Each variant's diff + prev-build sha, computed pre-push in build_push --
       # release-meta never pulls an image itself. Filenames carry the variant.
       - name: Download changelog artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: changelog-*
           path: changelog-artifacts
