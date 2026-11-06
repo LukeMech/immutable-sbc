@@ -23,7 +23,7 @@ FROM ghcr.io/lukemech/immutable-sbc-deps:latest AS deps
 #
 # Floating tag: a pinned digest 404'd after quay.io GC'd it,
 # breaking builds until re-pinned.
-FROM quay.io/fedora/fedora-bootc:44
+FROM quay.io/fedora/fedora-bootc:45
 
 # Which images/<VARIANT>/ this image builds -- see build.yml, which
 # matrixes over every directory under images/ and passes each one here.
