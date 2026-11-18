@@ -10,7 +10,7 @@ set -ouex pipefail
 #
 # Separate chip generation from 20-hailo8-pci.sh's Hailo-8/8L: different module
 # (hailo1x_pci vs hailo_pci), different device (/dev/h1x-N vs /dev/hailoN), different
-# upstream branch (hailort-drivers' master, not hailo8 -- frozen at v4.24.0 for Hailo-8).
+# upstream branch (hailort-drivers' master, not hailo8 -- frozen at HAILO8_DRIVER_VERSION for Hailo-8).
 # Same packaging approach otherwise: pinned commit, self-contained kmod rpm, no
 # TFLite/npu-run integration (see that file's header for why).
 #
@@ -36,25 +36,6 @@ if [[ -z "${SRC_DIR}" ]]; then
     exit 1
 fi
 
-# Upstream bug: common/pcie_common.c calls strncpy() (hailo_pcie_vdma_get_required_channels,
-# hailo_pcie_vdma_program_firmware_batch) without including <linux/string.h>. Adding just the
-# include (tried first) didn't fix it -- confirmed via CI, same two errors, byte-for-byte,
-# after the include landed (the compiler's own reported line numbers shifted by exactly the
-# inserted line, so it did land). Fedora kernel 7.2.5 has dropped strncpy() from
-# <linux/string.h> entirely, not just its transitive include -- has to be replaced with
-# strscpy(), the actively-maintained kernel string API, not just given a declaration. Not
-# present on the hailo8 branch 20-hailo8-pci.sh pins -- that pcie_common.c predates this
-# strncpy call entirely. Drop this patch once HAILO1X_DRIVER_COMMIT is bumped past an
-# upstream fix.
-sed -i \
-    -e '/#include <linux\/errno.h>/i #include <linux/string.h>' \
-    -e 's/strncpy(filename, file->filename, FW_FILENAME_MAX_LEN - 1);/strscpy(filename, file->filename, FW_FILENAME_MAX_LEN);/' \
-    "${SRC_DIR}/common/pcie_common.c"
-grep -q 'strncpy(filename, file->filename' "${SRC_DIR}/common/pcie_common.c" && {
-    echo "error: strncpy patch didn't match -- pcie_common.c changed upstream?" >&2
-    exit 1
-}
-
 # Flat archive (files at its root) -- extracted straight into hailo/hailo10h/, matching
 # the "hailo/hailo10h/<name>" paths the driver requests (common/pcie_common.c's
 # hailo10h_files_stg{1,2,3} tables). Includes every u-boot-<N>.dtb.signed variant since
@@ -66,9 +47,12 @@ FW_EXTRACT="${TMP}/hailo10h_fw"
 mkdir -p "${FW_EXTRACT}"
 tar -xzf "${TMP}/hailo10h_fw.tar.gz" -C "${FW_EXTRACT}"
 
-make -C "${SRC_DIR}/linux/pcie" "kernelver=${KVER}" all
+# Top-level Makefile, `pcie` target -- the one Kbuild there builds every Hailo driver
+# (pcie/pci_ep/integrated_nnc) and the target picks which; the module lands in
+# ${SRC_DIR} itself (M= is the top-level dir).
+make -C "${SRC_DIR}" "kernelver=${KVER}" pcie
 
-KO_PATH=$(find "${SRC_DIR}/linux/pcie/build" -iname 'hailo1x_pci.ko' -print -quit)
+KO_PATH=$(find "${SRC_DIR}" -iname 'hailo1x_pci.ko' -print -quit)
 if [[ -z "${KO_PATH}" ]]; then
     echo "error: driver build didn't produce hailo1x_pci.ko" >&2
     exit 1

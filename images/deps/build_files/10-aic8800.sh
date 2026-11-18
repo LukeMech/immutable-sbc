@@ -17,13 +17,13 @@ set -ouex pipefail
 # .deb; nothing here goes through the dkms tool).
 #
 # debian/patches/ (quilt series, applied below) is NOT cosmetic -- it's the actual
-# kernel-compat fixes, actively maintained per-kernel-version back to 6.1 (confirmed:
+# kernel-compat fixes, actively maintained per kernel version (confirmed:
 # building the raw, unpatched source against Fedora's kernel fails outright --
 # implicit-declaration/incompatible-pointer-type errors in cfg80211 ops that changed
-# signature in recent kernels, both fixed by fix-linux-7.1-build.patch and
-# fix-linux-7.2-build.patch). Applying the whole series (not hand-picking) matches
+# signature in recent kernels, fixed by the series' own fix-linux-*-build.patch
+# entries). Applying the whole series (not hand-picking) matches
 # how upstream's own Debian packaging actually builds this, rather than us guessing
-# which of the 28 patches matter.
+# which of the patches matter.
 #
 # Firmware install path: TWO destinations, not one -- confirmed by reading the
 # (patched) driver source directly, re-verified after applying the series above

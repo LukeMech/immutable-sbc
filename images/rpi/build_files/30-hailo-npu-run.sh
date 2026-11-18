@@ -9,7 +9,7 @@ set -ouex pipefail
 # chip (versions.env).
 #
 # The actual libhailort/hailortcli/hailo_platform build (two isolated
-# /opt/hailort-<version> prefixes, one per chip -- hailo_platform 4.24.0 and 5.4.0 link
+# /opt/hailort-<version> prefixes, one per chip -- the two pinned hailo_platform versions (versions.env) link
 # against mutually incompatible libhailort major versions, so they can no more share one
 # Python venv than the C++ CLIs can share one /usr/bin/hailortcli) is prebuilt by
 # images/deps/build_files/30-/31-hailort-hailo*.sh (ghcr.io/lukemech/immutable-sbc-deps,

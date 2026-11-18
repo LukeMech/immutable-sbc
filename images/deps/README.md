@@ -19,7 +19,7 @@ in the same run, before any variant builds on it: only on a push that changed so
 - `/rpms/kernel/` -- [`build_files/00-kernel.sh`](build_files/00-kernel.sh). The one thing here NOT pinned
   the way everything else in `versions.env` is -- it resolves whatever Fedora's current `kernel-core` is at
   build time, deliberately, so kernel security updates keep flowing without a manual pin bump every time.
-  The main image's own `build_files/00-pre-build.sh` is what actually replaces `fedora-bootc:44`'s own
+  The main image's own `build_files/00-pre-build.sh` is what actually replaces the base `fedora-bootc` image's own
   floating kernel with this pinned one (the confirmed, non-deprecated `ublue-os/bazzite`+`ublue-os/ucore`
   mechanism: shim `kernel-install.d`, `rpm --erase --nodeps`, install the pinned RPMs, `dnf5 versionlock`,
   restore the hooks -- see that file's own comments), so every kmod/HailoRT build below matches the exact

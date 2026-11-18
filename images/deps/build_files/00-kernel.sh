@@ -4,7 +4,7 @@ set -ouex pipefail
 
 ### Fedora's current kernel, resolved fresh every run -- deliberately NOT a pin in
 # versions.env like every other version this project builds. This is what lets the
-# main image's own build_files/00-pre-build.sh replace whatever fedora-bootc:44's
+# main image's own build_files/00-pre-build.sh replace whatever the base fedora-bootc image's
 # floating tag happens to have with a version this repo actually controls, while
 # still tracking Fedora's kernel security updates automatically instead of needing a
 # manual pin bump for every kernel release (see
@@ -22,8 +22,8 @@ cd /rpms/kernel
 # image build; kernel-headers is userspace UAPI headers, unrelated to out-of-tree
 # module builds, which need kernel-devel's /usr/src tree instead) -- and Fedora
 # doesn't always rebuild kernel-headers in lockstep with kernel-core (confirmed in
-# CI: a real kernel-headers-7.1.3 vs. kernel-core-7.1.13 mismatch at the same
-# resolution), so requiring it to match KVER below would just be its own source of
+# CI: kernel-headers and kernel-core resolving to different versions at the same
+# time), so requiring it to match KVER below would just be its own source of
 # false failures for a package nothing needs.
 dnf5 -y download \
     kernel \
@@ -53,7 +53,7 @@ echo "Resolved kernel: ${KVER}"
 # itself -- every later hook (10-aic8800.sh onward) builds kmods against
 # /usr/lib/modules/${KVER}/build, which only appears once kernel-devel's own %post
 # can find a matching /usr/lib/modules/${KVER} directory, which kernel-core/
-# kernel-modules provide. Parallel-installed alongside whatever fedora-bootc:44
+# kernel-modules provide. Parallel-installed alongside whatever the base fedora-bootc image
 # already ships (kernel packages are designed to coexist across versions) -- no
 # erase needed here, unlike the real swap in the main image's own 00-pre-build.sh.
 dnf5 -y install "./kernel-core-${KVER}.rpm" "./kernel-modules-${KVER}.rpm" \

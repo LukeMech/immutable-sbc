@@ -12,7 +12,7 @@ set -ouex pipefail
 #
 # kylegospo/gasket-dkms (GPL-2.0, pinned commit) rather than google/gasket-driver
 # directly -- it's the same source plus active modern-kernel compatibility fixes
-# (6.8+/6.13+, RHEL/Fedora preprocessor quirks) google's own repo hasn't picked up
+# (newer kernel APIs, RHEL/Fedora preprocessor quirks) google's own repo hasn't picked up
 # since 2024. Its own COPR only publishes x86_64 builds, but the source itself has
 # nothing architecture-specific -- built here the same self-contained-rpm way as the
 # Hailo/AIC8800 drivers instead of relying on that COPR.

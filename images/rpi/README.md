@@ -20,13 +20,13 @@ driver:
 
 - Hailo-8/8L (the original AI HAT+/Kit). Kernel module `hailo_pci` from
   [`hailo-ai/hailort-drivers`](https://github.com/hailo-ai/hailort-drivers)'s `hailo8` branch (frozen at
-  v4.24.0), device node `/dev/hailoN`, ~150 KiB firmware blob. Userspace runtime
-  (`libhailort`/`hailortcli-hailo8`) from `hailo-ai/hailort`'s matching v4.24.0 tag.
+  `HAILO8_DRIVER_VERSION` in [`images/deps/versions.env`](../deps/versions.env)), device node `/dev/hailoN`, ~150 KiB firmware blob. Userspace runtime
+  (`libhailort`/`hailortcli-hailo8`) from `hailo-ai/hailort`'s matching tag.
 - Hailo-10H/15 (AI HAT+ 2, released Jan 2026). Kernel module `hailo1x_pci` from the same driver repo's
-  `master` branch (v5.4.0 -- unrelated to and not a newer version of the hailo8 branch above), device node
+  `master` branch (`HAILO1X_DRIVER_VERSION` -- unrelated to and not a newer version of the hailo8 branch above), device node
   `/dev/h1x-N`. Firmware is a full U-Boot+kernel+rootfs bundle the chip boots as its own embedded OS (for
   on-chip LLM/VLM inference) -- ~38 MiB download, ~115 MiB installed. Userspace runtime from
-  `hailo-ai/hailort`'s matching v5.4.0 tag.
+  `hailo-ai/hailort`'s matching tag.
 
 Both drivers and both HailoRT builds (C++ lib/CLI + Python bindings) are now built in
 [`images/deps/`](../deps/) instead of here -- this variant's own build_files just install the resulting
@@ -37,7 +37,7 @@ prebuilt rpms (`kmod-hailo8-pci`/`kmod-hailo1x-pci`/`hailort-hailo8`/`hailort-ha
 hailo_model_zoo HEFs and coco labels -- no compile step, so that part stays here). See
 [`images/deps/README.md`](../deps/README.md) for why, and that directory's own hooks for the actual builds
 (GPL-2.0 drivers, pinned commit, no COPR/DKMS package exists; MIT-licensed HailoRT, isolated
-`/opt/hailort-4.24.0`/`/opt/hailort-5.4.0` prefixes since the two versions can't share one
+`/opt/hailort-<version>` prefixes (one per chip) since the two versions can't share one
 `libhailort.so`/`hailortcli`/Python venv, reachable via the `hailortcli-hailo8`/`hailortcli-hailo1x`
 symlinks in `/usr/bin`). Neither driver shows up under `/dev/accel` -- Hailo doesn't use the kernel's DRM
 accel subsystem, each chip registers its own character-device class instead.
