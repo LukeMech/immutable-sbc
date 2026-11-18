@@ -8,12 +8,12 @@ set -ouex pipefail
 # Merges what used to be two separate build steps in the main image:
 # images/rpi/build_files/20-hailort-hailo8.sh (C++ lib/CLI) and half of
 # images/rpi/build_files/30-hailo-npu-run.sh's build_hailo_python_bindings() (Python
-# bindings) -- now ONE rpm covering the whole isolated /opt/hailort-4.24.0 prefix,
+# bindings) -- now ONE rpm covering the whole isolated /opt/hailort-<HAILORT_HAILO8_VERSION> prefix,
 # since npu-run's Hailo backend needs both and they were always installed under the
 # same prefix anyway.
 #
 # MIT-licensed (libhailort/hailortcli themselves -- LICENSE-3RD-PARTY.md covers bundled
-# deps), pinned commit matching 20-hailo8-pci.sh's driver v4.24.0 exactly: HailoRT and
+# deps), pinned commit matching 20-hailo8-pci.sh's driver version (HAILO8_DRIVER_VERSION) exactly: HailoRT and
 # its driver are version-locked pairs (same release date on both repos, confirmed) --
 # this build will never get an upstream fix for a future toolchain incompatibility,
 # since nothing here is ever going to move to a newer commit. Builds with a vendored,
@@ -21,15 +21,15 @@ set -ouex pipefail
 # a future Fedora cmake bump breaking this permanently-frozen build, with no upstream
 # fix ever coming, is a real risk already hit twice (protobuf's nested sub-build
 # assuming lib not lib64; one of the bundled deps' cmake_minimum_required being older
-# than CMake 4.0 now allows) -- both only fixable here, not by re-pinning to a newer
+# than current CMake still allows) -- both only fixable here, not by re-pinning to a newer
 # HailoRT commit.
 #
-# Genuinely heavy build: CMake fetches and compiles protobuf v21.12 from source itself
+# Genuinely heavy build: CMake fetches and compiles its pinned protobuf from source itself
 # (no system package, no sha256 pin possible -- that's their build tooling's own git
 # clone, outside our control), then the hailort C++ library/CLI on top, then the
-# pybind11 Python extension. Installed under its own prefix (/opt/hailort-4.24.0), not
+# pybind11 Python extension. Installed under its own prefix (/opt/hailort-<HAILORT_HAILO8_VERSION>), not
 # /usr -- 31-hailort-hailo1x.sh installs a DIFFERENT, incompatible HailoRT version
-# (5.4.0) for the other chip, and the two can't share one libhailort.so/hailortcli/venv.
+# (HAILORT_HAILO1X_VERSION) for the other chip, and the two can't share one libhailort.so/hailortcli/venv.
 # A hailortcli-hailo8 symlink in /usr/bin reaches into the isolated prefix instead.
 #
 # The Python venv can't be created at a buildroot-relative fake path -- venvs bake in
@@ -89,7 +89,7 @@ BUILD_DIR="${TMP}/build"
 # CMAKE_INSTALL_LIBDIR pinned explicitly -- GNUInstallDirs' lib-vs-lib64 guess isn't
 # something we also want to have to guess right when setting RPATH below.
 # CMAKE_INSTALL_RPATH + CMAKE_BUILD_WITH_INSTALL_RPATH: without this, hailortcli has no
-# baked-in path to find libhailort.so.4.24.0 -- this isolated prefix is never on the
+# baked-in path to find libhailort.so.<version> -- this isolated prefix is never on the
 # system's default library search path.
 # CMAKE_POLICY_VERSION_MINIMUM: one of the FetchContent-bundled deps (cli11)
 # cmake_minimum_requires a version below 3.5, which modern CMake refuses outright
@@ -132,11 +132,10 @@ python3 -m venv --system-site-packages "${PREFIX}/pyvenv"
 
 # PATH: setup.py's own build_ext shells out to a bare `cmake` -- prepend our vendored
 # one so that resolves instead of failing outright (no system cmake package).
-# --ignore-requires-python: this package's own metadata declares Requires-Python
-# <3.14,>=3.10 (confirmed in CI: "Package 'hailort' requires a different Python:
-# 3.14.7 not in '<3.14,>=3.10'") -- a stale upper bound from before Fedora shipped
-# 3.14, not a real incompatibility (pybind11 2.13.6, what this actually builds
-# against, has no issue with 3.14).
+# --ignore-requires-python: this package's own metadata declares a Requires-Python
+# upper bound that lags behind Fedora's system python3 (confirmed in CI: "Package
+# 'hailort' requires a different Python") -- a stale bound, not a real
+# incompatibility with the pybind11 this actually builds against.
 PATH="${CMAKE_BIN_DIR}:${PATH}" \
     LIBHAILORT_PATH="${PREFIX}/lib/libhailort.so" \
     HAILORT_INCLUDE_DIR="${PREFIX}/include" \
@@ -147,7 +146,7 @@ PATH="${CMAKE_BIN_DIR}:${PATH}" \
 # libhailort.so *file* path instead of its directory, but setup.py's own install step
 # doesn't even use the CMake-installed copy -- it globs _pyhailort*.so straight out of
 # the raw build tree and copies that, so patching INSTALL_RPATH never reaches the
-# shipped file (confirmed in CI: "ImportError: libhailort.so.4.24.0: cannot open
+# shipped file (confirmed in CI: "ImportError: libhailort.so.<version>: cannot open
 # shared object file" persisted after that patch). Fix the actual shipped file
 # directly instead.
 PYHAILORT_SO=$(find "${PREFIX}/pyvenv" -name '_pyhailort*.so' -print -quit)
@@ -185,7 +184,7 @@ BuildArch: ${ARCH}
 %description
 libhailort.so, hailortcli and the hailo_platform Python bindings (pyhailort), built
 from hailo-ai/hailort (commit ${HAILORT_COMMIT}), installed under ${PREFIX} --
-isolated from hailort-hailo1x's incompatible v5.4.0 build. Run as hailortcli-hailo8;
+isolated from hailort-hailo1x's incompatible v${HAILORT_HAILO1X_VERSION} build. Run as hailortcli-hailo8;
 the Python bindings' isolated venv lives at ${PREFIX}/pyvenv.
 
 %files

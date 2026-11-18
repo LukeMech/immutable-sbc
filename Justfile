@@ -85,6 +85,10 @@ build $variant="rk3588" $target_image=(image_name + "-" + variant) $tag=default_
     set -euox pipefail
 
     BUILD_ARGS=(--build-arg "VARIANT=${variant}")
+    # Optional: build against a locally built deps image (see Containerfile's DEPS_IMAGE).
+    if [[ -n "${DEPS_IMAGE:-}" ]]; then
+        BUILD_ARGS+=(--build-arg "DEPS_IMAGE=${DEPS_IMAGE}")
+    fi
     LABELS=()
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)

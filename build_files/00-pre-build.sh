@@ -15,7 +15,7 @@ sed -i '/^\[main\]/a install_weak_deps=False' /etc/dnf/dnf.conf
 # against this exact kernel version, so the two have to match, and the deps image is
 # what actually resolves/downloads Fedora's current kernel (see
 # images/deps/build_files/00-kernel.sh) rather than trusting whatever
-# fedora-bootc:44's own floating tag happens to have captured that week.
+# the base fedora-bootc image's own floating tag happens to have captured that week.
 #
 # This exact mechanism -- shim kernel-install.d, `rpm --erase --nodeps`, `dnf5
 # install` the pinned RPMs, `dnf5 versionlock add`, restore the hooks -- is

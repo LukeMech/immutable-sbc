@@ -34,7 +34,7 @@ board = "Raspberry Pi 5 (BCM2712)"
 variant = "rpi"
 # worproject/rpi5-uefi -- no pftf/RPi5 exists; this is the de facto EDK2 for the 5.
 # VPU boot blobs live in its own EEPROM/SPI flash now, so unlike rpi-4b, this zip is
-# just RPI_EFI.fd + config.txt + a device tree. v0.3 (2024-03-16) is still latest.
+# just RPI_EFI.fd + config.txt + a device tree.
 firmware_layout = "fat"
 edk2_url = "https://github.com/worproject/rpi5-uefi/releases/download/v0.3/RPi5_UEFI_Release_v0.3.zip"
 edk2_sha256 = "2337df318845448ebcc8a6a587d15dccec44b54c665ece21250d2f6170732724"
