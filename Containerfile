@@ -1,3 +1,11 @@
+# Deps image (see the `deps` stage below). Must be declared before the first FROM:
+# only global ARGs are expanded in FROM lines, an ARG inside a stage expands to "".
+#
+# DEPS_IMAGE override: on a PR that changes images/deps/, build.yml points this at
+# that PR's own deps image (built by build-deps.yml, handed over as an artifact,
+# never pushed) instead of the published :latest.
+ARG DEPS_IMAGE=ghcr.io/lukemech/immutable-sbc-deps:latest
+
 # Allow build scripts to be referenced without being copied into the final image
 FROM scratch AS ctx
 COPY build_files /
@@ -16,11 +24,7 @@ COPY scripts /scripts
 # a digest pin; see that workflow for why a floating tag here is still safe). Never
 # runs on a booted system, only bind-mounted at this build's own build time, so
 # bootc's runtime signature policy doesn't apply to it (see images/deps/README.md).
-#
-# DEPS_IMAGE override: on a PR that changes images/deps/, build.yml points this at
-# that PR's own deps image (built by build-deps.yml, handed over as an artifact,
-# never pushed) instead of the published :latest.
-ARG DEPS_IMAGE=ghcr.io/lukemech/immutable-sbc-deps:latest
+# DEPS_IMAGE is declared as a global ARG at the top of this file.
 FROM ${DEPS_IMAGE} AS deps
 
 # Fedora bootc aarch64, generic across variants (driver/kernel needs go in
